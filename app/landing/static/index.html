@@ -3,11 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>NOVA-7 — Elastic Launch Demo</title>
+    <title>SCENARIO_NAME_PLACEHOLDER — Elastic Observability Demo</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Space+Mono:wght@400;700&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/landing/static/style.css">
+    <!--THEME_CSS-->
 </head>
 <body>
     <div class="scanline"></div>
@@ -16,10 +17,10 @@
     <!-- Hero -->
     <section class="hero">
         <div class="hero-prefix">ELASTIC OBSERVABILITY DEMO</div>
-        <div class="hero-title">NOVA-7</div>
-        <div class="hero-subtitle">Orbital Insertion Mission Control</div>
+        <div class="hero-title">SCENARIO_NAME_PLACEHOLDER</div>
+        <div class="hero-subtitle">LANDING_TITLE_PLACEHOLDER</div>
         <div class="hero-desc">
-            A multi-cloud space launch simulation generating real-time telemetry across 9 services,
+            A multi-cloud simulation generating real-time telemetry across 9 services,
             20 fault channels, and 3 cloud providers — all observable through Elastic's AI-powered
             observability platform.
         </div>
@@ -35,21 +36,17 @@
 
     <!-- Primary Controls -->
     <section class="nav-section">
-        <div class="section-label">Mission Control Interfaces</div>
+        <div class="section-label">Control Interfaces</div>
         <div class="nav-grid">
 
             <a href="/dashboard" class="nav-card">
-                <img src="/landing/static/images/nova7-mission-control.png"
-                     alt="Mission Control"
-                     class="card-image"
-                     onerror="this.style.display='none'">
                 <div class="card-body">
                     <div class="card-header">
                         <span class="card-indicator"></span>
-                        <span class="card-title">Mission Control Dashboard</span>
+                        <span class="card-title">DASHBOARD_TITLE_PLACEHOLDER</span>
                     </div>
                     <div class="card-desc">
-                        Real-time mission overview with countdown clock, service health grid across
+                        Real-time operations overview with service health grid across
                         AWS / GCP / Azure, and live event feed. WebSocket-powered for instant updates.
                     </div>
                     <span class="card-tag live">Live</span>
@@ -60,19 +57,15 @@
             </a>
 
             <a href="/chaos" class="nav-card">
-                <img src="/landing/static/images/nova7-telemetry.png"
-                     alt="Chaos Controller"
-                     class="card-image"
-                     onerror="this.style.display='none'">
                 <div class="card-body">
                     <div class="card-header">
                         <span class="card-indicator"></span>
-                        <span class="card-title">Chaos Controller</span>
+                        <span class="card-title">CHAOS_TITLE_PLACEHOLDER</span>
                     </div>
                     <div class="card-desc">
-                        Inject faults across 20 channels — thermal drift, fuel pressure anomalies,
-                        GPS interference, comms degradation, and more. Trigger cascading failures
-                        and watch the AI agent respond.
+                        Inject faults across 20 channels — trigger cascading failures
+                        and watch the AI agent respond with automated root cause analysis
+                        and remediation.
                     </div>
                     <span class="card-tag live">Live</span>
                     <span class="card-tag">20 Channels</span>
@@ -87,12 +80,8 @@
         <div class="section-label">Elastic Observability</div>
         <div class="nav-grid">
 
-            <a href="KIBANA_URL_PLACEHOLDER/app/dashboards#/view/nova7-exec-dashboard"
+            <a href="KIBANA_URL_PLACEHOLDER/app/dashboards#/view/NAMESPACE_PLACEHOLDER-exec-dashboard"
                class="nav-card" target="_blank" rel="noopener">
-                <img src="/landing/static/images/nova7-elastic-observability.png"
-                     alt="Executive Dashboard"
-                     class="card-image"
-                     onerror="this.style.display='none'">
                 <div class="card-body">
                     <div class="card-header">
                         <span class="card-indicator"></span>
@@ -101,20 +90,15 @@
                     </div>
                     <div class="card-desc">
                         Kibana Lens dashboard with error rates, log volume trends, service health heatmap,
-                        nginx traffic, MySQL slow queries, and cloud distribution — all in real time.
+                        traffic metrics, and cloud distribution — all in real time.
                     </div>
                     <span class="card-tag kibana">Kibana</span>
                     <span class="card-tag elastic">Lens</span>
-                    <span class="card-tag">11 Panels</span>
                 </div>
             </a>
 
             <a href="KIBANA_URL_PLACEHOLDER/app/observability/overview"
                class="nav-card" target="_blank" rel="noopener">
-                <img src="/landing/static/images/nova7-cloud-infra.png"
-                     alt="Observability Overview"
-                     class="card-image"
-                     onerror="this.style.display='none'">
                 <div class="card-body">
                     <div class="card-header">
                         <span class="card-indicator"></span>
@@ -132,10 +116,6 @@
 
             <a href="KIBANA_URL_PLACEHOLDER/app/agent_builder"
                class="nav-card" target="_blank" rel="noopener">
-                <img src="/landing/static/images/nova7-rocket.png"
-                     alt="AI Agent Builder"
-                     class="card-image"
-                     onerror="this.style.display='none'">
                 <div class="card-body">
                     <div class="card-header">
                         <span class="card-indicator"></span>
@@ -143,12 +123,11 @@
                         <span class="external-icon">&#8599;</span>
                     </div>
                     <div class="card-desc">
-                        The NOVA-7 Launch Anomaly Analyst — an AI agent with 7 tools for root cause analysis,
+                        An AI agent with specialized tools for root cause analysis,
                         anomaly propagation tracing, safety assessment, and automated remediation.
                     </div>
                     <span class="card-tag kibana">Kibana</span>
                     <span class="card-tag">AI Agent</span>
-                    <span class="card-tag">7 Tools</span>
                 </div>
             </a>
 
@@ -238,8 +217,8 @@
 
     <!-- Footer -->
     <footer class="footer">
-        NOVA-7 Orbital Insertion &bull; Elastic Observability Demo &bull;
-        <a href="/docs">API Docs</a>
+        SCENARIO_NAME_PLACEHOLDER &bull; Elastic Observability Demo &bull;
+        <a href="/">Scenario Selector</a>
     </footer>
 
 </body>

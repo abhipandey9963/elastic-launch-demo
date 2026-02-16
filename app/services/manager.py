@@ -1,4 +1,4 @@
-"""Service Manager — starts/stops all 9 simulated services, generators, and manages countdown."""
+"""Service Manager — starts/stops all simulated services, generators, and manages countdown."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import threading
 import time
 from typing import Any, Optional
 
-from app.config import COUNTDOWN_SPEED, COUNTDOWN_START_SECONDS, SERVICES
+from app.config import COUNTDOWN_ENABLED, COUNTDOWN_SPEED, COUNTDOWN_START_SECONDS, SERVICES, ACTIVE_SCENARIO
 from app.telemetry import OTLPClient
 
 logger = logging.getLogger("nova7.manager")
@@ -27,6 +27,7 @@ class ServiceManager:
         self._countdown_remaining = float(COUNTDOWN_START_SECONDS)
         self._countdown_speed = COUNTDOWN_SPEED
         self._countdown_running = False
+        self._countdown_enabled = COUNTDOWN_ENABLED
         self._countdown_thread: Optional[threading.Thread] = None
         self._countdown_lock = threading.Lock()
         self._stop_event = threading.Event()
@@ -37,28 +38,12 @@ class ServiceManager:
         self._init_services()
 
     def _init_services(self) -> None:
-        """Lazy-import and instantiate all services."""
-        from app.services.comms_array import CommsArrayService
-        from app.services.fuel_system import FuelSystemService
-        from app.services.ground_systems import GroundSystemsService
-        from app.services.mission_control import MissionControlService
-        from app.services.navigation import NavigationService
-        from app.services.payload_monitor import PayloadMonitorService
-        from app.services.range_safety import RangeSafetyService
-        from app.services.sensor_validator import SensorValidatorService
-        from app.services.telemetry_relay import TelemetryRelayService
+        """Dynamically load and instantiate services from the active scenario."""
+        from scenarios import get_scenario
 
-        service_classes = [
-            MissionControlService,
-            FuelSystemService,
-            GroundSystemsService,
-            NavigationService,
-            CommsArrayService,
-            PayloadMonitorService,
-            SensorValidatorService,
-            TelemetryRelayService,
-            RangeSafetyService,
-        ]
+        scenario = get_scenario(ACTIVE_SCENARIO)
+        service_classes = scenario.get_service_classes()
+
         for cls in service_classes:
             svc = cls(self.chaos_controller, self.otlp)
             self.services[svc.SERVICE_NAME] = svc
@@ -66,9 +51,10 @@ class ServiceManager:
     def start_all(self) -> None:
         for svc in self.services.values():
             svc.start()
-        self._start_countdown_thread()
+        if self._countdown_enabled:
+            self._start_countdown_thread()
         self._start_generators()
-        logger.info("All %d services + 7 generators started", len(self.services))
+        logger.info("All %d services + generators started", len(self.services))
 
     def stop_all(self) -> None:
         self._stop_event.set()
@@ -182,6 +168,7 @@ class ServiceManager:
                 "display": f"T-{minutes:02d}:{seconds:02d}",
                 "running": self._countdown_running,
                 "speed": self._countdown_speed,
+                "enabled": self._countdown_enabled,
             }
 
     def get_all_status(self) -> dict[str, Any]:

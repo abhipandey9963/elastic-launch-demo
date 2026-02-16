@@ -1,12 +1,13 @@
-// NOVA-7 Chaos Controller UI
+// Chaos Controller UI (scenario-aware)
 (function () {
     'use strict';
 
     let selectedChannel = null;
     let channelData = {};
 
-    // ── localStorage session isolation ──────────────────────
-    const LS_KEY = 'nova7_my_channels';
+    // ── localStorage session isolation (namespace-scoped) ────
+    const ns = window.SCENARIO_NAMESPACE || 'demo';
+    const LS_KEY = ns + '_my_channels';
 
     function getMyChannels() {
         try {
@@ -123,7 +124,10 @@
 
         const statusEl = document.getElementById('info-status');
         statusEl.textContent = ch.state;
-        statusEl.style.color = ch.state === 'ACTIVE' ? '#ff0000' : '#00ff41';
+        const styles = getComputedStyle(document.documentElement);
+        const critColor = styles.getPropertyValue('--status-critical').trim() || '#ff0000';
+        const nomColor = styles.getPropertyValue('--status-nominal').trim() || '#00ff41';
+        statusEl.style.color = ch.state === 'ACTIVE' ? critColor : nomColor;
 
         const btnInject = document.getElementById('btn-inject');
         const btnResolve = document.getElementById('btn-resolve');

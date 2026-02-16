@@ -10,10 +10,14 @@ import time
 from abc import ABC, abstractmethod
 from typing import Any, Optional
 
-from app.config import CHANNEL_REGISTRY, MISSION_ID, SERVICES
+from app.config import ACTIVE_SCENARIO, CHANNEL_REGISTRY, MISSION_ID, SERVICES
 from app.telemetry import OTLPClient
 
 logger = logging.getLogger("nova7.services")
+
+def _get_scenario():
+    from scenarios import get_scenario
+    return get_scenario(ACTIVE_SCENARIO)
 
 
 class BaseService(ABC):
@@ -251,66 +255,5 @@ class BaseService(ABC):
         self.emit_log("WARN", random.choice(messages), attrs)
 
     def _generate_fault_params(self, channel: int) -> dict[str, Any]:
-        """Generate realistic random parameters for fault messages."""
-        # Each channel gets contextually appropriate random values
-        params: dict[str, Any] = {
-            "deviation": round(random.uniform(3.0, 12.0), 1),
-            "epoch": int(time.time()) - random.randint(100, 5000),
-            "tank_id": random.choice(["LOX-1", "LOX-2", "RP1-1", "RP1-2"]),
-            "pressure": round(random.uniform(180, 350), 1),
-            "expected_min": 200,
-            "expected_max": 310,
-            "measured": round(random.uniform(2.0, 8.0), 2),
-            "commanded": round(random.uniform(4.0, 6.0), 2),
-            "delta": round(random.uniform(4.0, 15.0), 1),
-            "num_satellites": random.randint(3, 8),
-            "uncertainty": round(random.uniform(5.0, 50.0), 1),
-            "drift_ms": round(random.uniform(5.0, 25.0), 1),
-            "threshold_ms": 3.0,
-            "axis": random.choice(["X", "Y", "Z"]),
-            "error_arcsec": round(random.uniform(10.0, 45.0), 1),
-            "limit_arcsec": 5.0,
-            "snr_db": round(random.uniform(3.0, 8.0), 1),
-            "min_snr_db": 12.0,
-            "rf_channel": random.choice(["S1", "S2", "S3"]),
-            "loss_pct": round(random.uniform(5.0, 25.0), 1),
-            "threshold_pct": 2.0,
-            "link_id": random.choice(["XB-PRIMARY", "XB-SECONDARY"]),
-            "az_error": round(random.uniform(1.0, 5.0), 2),
-            "el_error": round(random.uniform(0.5, 3.0), 2),
-            "zone": random.choice(["A", "B", "C", "D"]),
-            "temp": round(random.uniform(55.0, 85.0), 1),
-            "safe_min": -10.0,
-            "safe_max": 45.0,
-            "amplitude": round(random.uniform(2.0, 8.0), 2),
-            "frequency": round(random.uniform(20.0, 200.0), 1),
-            "limit": 1.5,
-            "source_cloud": random.choice(["aws", "gcp", "azure"]),
-            "dest_cloud": random.choice(["aws", "gcp", "azure"]),
-            "latency_ms": random.randint(500, 3000),
-            "threshold_ms_relay": 200,
-            "corrupted_count": random.randint(5, 50),
-            "total_count": random.randint(100, 500),
-            "route_id": random.choice(["AWS-GCP-01", "GCP-AZ-01", "AWS-AZ-01"]),
-            "bus_id": random.choice(["PWR-A", "PWR-B", "PWR-C"]),
-            "voltage": round(random.uniform(105, 135), 1),
-            "nominal_v": 120.0,
-            "deviation_pct": round(random.uniform(8.0, 20.0), 1),
-            "station_id": random.choice(["WX-NORTH", "WX-SOUTH", "WX-EAST", "WX-WEST"]),
-            "gap_seconds": random.randint(30, 180),
-            "max_gap": 15,
-            "system_id": random.choice(["HYD-A", "HYD-B"]),
-            "min_pressure": 2800,
-            "queue_depth": random.randint(500, 5000),
-            "rate": round(random.uniform(1.0, 10.0), 1),
-            "min_rate": 50.0,
-            "sensor_id": f"SENS-{random.randint(1000, 9999)}",
-            "actual_epoch": int(time.time()) - random.randint(86400, 604800),
-            "expected_epoch": int(time.time()) - 3600,
-            "unit_id": random.choice(["FTS-A", "FTS-B"]),
-            "error_code": f"0x{random.randint(1, 255):02X}",
-            "radar_id": random.choice(["RDR-1", "RDR-2", "RDR-3"]),
-            "gap_ms": random.randint(500, 5000),
-            "max_gap_ms": 250,
-        }
-        return params
+        """Generate realistic random parameters for fault messages from scenario."""
+        return _get_scenario().get_fault_params(channel)

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Trace Generator — sends distributed traces for APM Service Map via OTLP.
 
-Generates realistic distributed traces across NOVA-7's 9 services with proper
+Generates realistic distributed traces across the active scenario's services with proper
 parent-child span relationships, service topology, and APM-compatible attributes.
 
 Usage (standalone):
@@ -19,7 +19,7 @@ import threading
 import time
 
 from app.telemetry import OTLPClient, _format_attributes, SCHEMA_URL
-from app.config import SERVICES, CHANNEL_REGISTRY
+from app.config import SERVICES, CHANNEL_REGISTRY, ACTIVE_SCENARIO, NAMESPACE
 
 logger = logging.getLogger("trace-generator")
 
@@ -36,96 +36,16 @@ SPAN_KIND_CLIENT = 3
 STATUS_OK = 1
 STATUS_ERROR = 2
 
-# ── Service topology — defines inter-service call patterns ────────────────────
-# Maps caller -> list of (callee, endpoint, method) tuples
-SERVICE_TOPOLOGY = {
-    "mission-control": [
-        ("fuel-system", "/api/v1/fuel/status", "GET"),
-        ("fuel-system", "/api/v1/fuel/pressure", "GET"),
-        ("navigation", "/api/v1/nav/position", "GET"),
-        ("navigation", "/api/v1/nav/trajectory", "POST"),
-        ("ground-systems", "/api/v1/ground/weather", "GET"),
-        ("ground-systems", "/api/v1/ground/power", "GET"),
-        ("comms-array", "/api/v1/comms/status", "GET"),
-        ("telemetry-relay", "/api/v1/relay/health", "GET"),
-    ],
-    "navigation": [
-        ("sensor-validator", "/api/v1/validate/imu", "POST"),
-        ("sensor-validator", "/api/v1/validate/gps", "POST"),
-        ("sensor-validator", "/api/v1/validate/star-tracker", "POST"),
-    ],
-    "fuel-system": [
-        ("sensor-validator", "/api/v1/validate/pressure", "POST"),
-        ("sensor-validator", "/api/v1/validate/thermal", "POST"),
-        ("sensor-validator", "/api/v1/validate/flow-rate", "POST"),
-    ],
-    "payload-monitor": [
-        ("sensor-validator", "/api/v1/validate/vibration", "POST"),
-        ("sensor-validator", "/api/v1/validate/payload-thermal", "POST"),
-    ],
-    "range-safety": [
-        ("navigation", "/api/v1/nav/position", "GET"),
-        ("comms-array", "/api/v1/comms/tracking", "GET"),
-    ],
-    "telemetry-relay": [
-        ("comms-array", "/api/v1/comms/relay", "POST"),
-    ],
-}
 
-# Entry-point endpoints for each service (external or scheduled triggers)
-ENTRY_ENDPOINTS = {
-    "mission-control": [
-        ("/api/v1/mission/status", "GET"),
-        ("/api/v1/mission/countdown", "GET"),
-        ("/api/v1/mission/telemetry", "POST"),
-    ],
-    "fuel-system": [
-        ("/api/v1/fuel/monitor", "POST"),
-    ],
-    "navigation": [
-        ("/api/v1/nav/compute", "POST"),
-    ],
-    "ground-systems": [
-        ("/api/v1/ground/monitor", "POST"),
-    ],
-    "comms-array": [
-        ("/api/v1/comms/poll", "POST"),
-    ],
-    "payload-monitor": [
-        ("/api/v1/payload/scan", "POST"),
-    ],
-    "sensor-validator": [
-        ("/api/v1/validate/batch", "POST"),
-    ],
-    "telemetry-relay": [
-        ("/api/v1/relay/forward", "POST"),
-    ],
-    "range-safety": [
-        ("/api/v1/safety/check", "POST"),
-    ],
-}
+def _load_topology():
+    """Load topology data from the active scenario."""
+    from scenarios import get_scenario
+    scenario = get_scenario(ACTIVE_SCENARIO)
+    return scenario.service_topology, scenario.entry_endpoints, scenario.db_operations
 
-# Database operations for services that access databases
-DB_OPERATIONS = {
-    "mission-control": [
-        ("SELECT", "mission_events", "SELECT * FROM mission_events WHERE phase = ? ORDER BY timestamp DESC LIMIT 100"),
-        ("INSERT", "telemetry_readings", "INSERT INTO telemetry_readings (service, metric, value, ts) VALUES (?, ?, ?, NOW())"),
-    ],
-    "fuel-system": [
-        ("SELECT", "sensor_data", "SELECT reading, baseline FROM sensor_data WHERE sensor_type = 'pressure' AND ts > NOW() - INTERVAL 5 MINUTE"),
-        ("UPDATE", "sensor_registry", "UPDATE sensor_registry SET last_reading = ?, last_seen = NOW() WHERE sensor_id = ?"),
-    ],
-    "navigation": [
-        ("SELECT", "calibration_epochs", "SELECT epoch, baseline FROM calibration_epochs WHERE sensor_type IN ('imu', 'gps', 'star_tracker')"),
-    ],
-    "sensor-validator": [
-        ("SELECT", "validation_results", "SELECT * FROM validation_results WHERE sensor_id = ? AND validated_at > NOW() - INTERVAL 1 MINUTE"),
-        ("INSERT", "validation_results", "INSERT INTO validation_results (sensor_id, result, confidence, validated_at) VALUES (?, ?, ?, NOW())"),
-    ],
-    "ground-systems": [
-        ("SELECT", "weather_stations", "SELECT station_id, temp, wind_speed, visibility FROM weather_stations WHERE last_update > NOW() - INTERVAL 30 SECOND"),
-    ],
-}
+
+# ── Module-level topology (loaded once) ──────────────────────────────────────
+SERVICE_TOPOLOGY, ENTRY_ENDPOINTS, DB_OPERATIONS = _load_topology()
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -141,7 +61,7 @@ def _build_resource(service_name: str) -> dict:
     cfg = SERVICES[service_name]
     attrs = {
         "service.name": service_name,
-        "service.namespace": "nova7",
+        "service.namespace": NAMESPACE,
         "service.version": "1.0.0",
         "service.instance.id": f"{service_name}-001",
         "telemetry.sdk.language": cfg.get("language", "python"),
@@ -176,10 +96,11 @@ def _generate_trace(client: OTLPClient, resources: dict, rng: random.Random,
     trace_id = _gen_trace_id()
     spans_by_service: dict[str, list] = {}
 
-    # Pick a random entry-point service (weighted toward mission-control)
-    entry_services = ["mission-control"] * 4 + [
-        "fuel-system", "navigation", "ground-systems",
-        "payload-monitor", "range-safety", "telemetry-relay",
+    # Pick a random entry-point service (weighted toward first service)
+    service_names = list(SERVICES.keys())
+    first_service = service_names[0]
+    entry_services = [first_service] * 4 + [
+        s for s in service_names[1:] if s in ENTRY_ENDPOINTS
     ]
     entry_service = rng.choice(entry_services)
     entry_endpoint, entry_method = rng.choice(ENTRY_ENDPOINTS[entry_service])
@@ -244,11 +165,11 @@ def _generate_trace(client: OTLPClient, resources: dict, rng: random.Random,
             status_code=STATUS_OK,
             attributes={
                 "db.system": "mysql",
-                "db.name": "nova7_telemetry",
+                "db.name": f"{NAMESPACE}_telemetry",
                 "db.statement": statement,
                 "db.operation": op,
                 "db.sql.table": table,
-                "net.peer.name": "nova7-mysql-host",
+                "net.peer.name": f"{NAMESPACE}-mysql-host",
                 "net.peer.port": 3306,
             },
         )
@@ -332,11 +253,11 @@ def _generate_trace(client: OTLPClient, resources: dict, rng: random.Random,
                     status_code=STATUS_OK,
                     attributes={
                         "db.system": "mysql",
-                        "db.name": "nova7_telemetry",
+                        "db.name": f"{NAMESPACE}_telemetry",
                         "db.statement": statement,
                         "db.operation": op,
                         "db.sql.table": table,
-                        "net.peer.name": "nova7-mysql-host",
+                        "net.peer.name": f"{NAMESPACE}-mysql-host",
                         "net.peer.port": 3306,
                     },
                 )

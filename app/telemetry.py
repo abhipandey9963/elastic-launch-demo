@@ -71,6 +71,25 @@ class OTLPClient:
         self.consecutive_failures = 0
         self.max_failures_before_backoff = 5
 
+    def reconfigure(self, endpoint: str, api_key: str, auth_type: str = "ApiKey"):
+        """Update endpoint and auth for a running client."""
+        self.endpoint = endpoint.rstrip("/")
+        self.api_key = api_key
+        self.auth_type = auth_type
+        self.consecutive_failures = 0
+
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"{self.auth_type} {self.api_key}"
+        # Close old client, create new one
+        if self.client:
+            try:
+                self.client.close()
+            except Exception:
+                pass
+        self.client = httpx.Client(headers=headers, http2=True, timeout=5)
+        logger.info("OTLPClient reconfigured → %s", self.endpoint)
+
     # ── Resource helpers ───────────────────────────────────────────────
     @staticmethod
     def build_resource(service_name: str, service_cfg: dict[str, Any]) -> dict[str, Any]:

@@ -1,4 +1,4 @@
-// NOVA-7 Dashboard — WebSocket client
+// Dashboard — WebSocket client (scenario-aware)
 (function () {
     'use strict';
 
@@ -7,8 +7,9 @@
     let ws = null;
     let pollInterval = null;
 
-    // ── localStorage session isolation ──────────────────────
-    const LS_KEY = 'nova7_my_channels';
+    // ── localStorage session isolation (namespace-scoped) ────
+    const ns = window.SCENARIO_NAMESPACE || 'demo';
+    const LS_KEY = ns + '_my_channels';
 
     function getMyChannels() {
         try {
@@ -19,6 +20,72 @@
     function removeMyChannel(ch) {
         const chs = getMyChannels().filter(c => c !== ch);
         localStorage.setItem(LS_KEY, JSON.stringify(chs));
+    }
+
+    // ── Dynamic service grid builder ────────────────────────
+    function buildServiceGrid(services) {
+        const grid = document.getElementById('subsystem-grid');
+        if (!grid) return;
+
+        // Group services by cloud provider
+        const clouds = { aws: [], gcp: [], azure: [] };
+        for (const [name, cfg] of Object.entries(services)) {
+            const provider = cfg.cloud_provider || 'aws';
+            if (!clouds[provider]) clouds[provider] = [];
+            clouds[provider].push({ name, ...cfg });
+        }
+
+        const cloudLabels = {
+            aws: { label: 'AWS', cls: 'aws' },
+            gcp: { label: 'GCP', cls: 'gcp' },
+            azure: { label: 'Azure', cls: 'azure' },
+        };
+
+        grid.innerHTML = '';
+        for (const [provider, svcs] of Object.entries(clouds)) {
+            if (svcs.length === 0) continue;
+            const col = document.createElement('div');
+            col.className = 'cloud-column';
+
+            const region = svcs[0].cloud_region || '';
+            const info = cloudLabels[provider] || { label: provider.toUpperCase(), cls: provider };
+            col.innerHTML = `<div class="cloud-label ${info.cls}">${info.label} <span class="cloud-region">${region}</span></div>`;
+
+            for (const svc of svcs) {
+                const card = document.createElement('div');
+                card.className = 'service-card nominal';
+                card.id = 'svc-' + svc.name;
+                card.dataset.service = svc.name;
+                const displayName = svc.name.replace(/-/g, ' ').toUpperCase();
+                const subsystem = (svc.subsystem || '').replace(/_/g, ' ');
+                card.innerHTML = `
+                    <div class="svc-name">${displayName}</div>
+                    <div class="svc-subsystem">${subsystem}</div>
+                    <div class="svc-status nominal">NOMINAL</div>
+                    <div class="svc-indicator"></div>
+                `;
+                col.appendChild(card);
+            }
+            grid.appendChild(col);
+        }
+    }
+
+    // ── Load scenario data and build UI ─────────────────────
+    function initScenario() {
+        fetch('/api/scenario')
+            .then(r => r.json())
+            .then(data => {
+                // Build service grid
+                if (data.services) {
+                    buildServiceGrid(data.services);
+                }
+                // Show countdown section if enabled
+                if (data.countdown && data.countdown.enabled) {
+                    const section = document.getElementById('countdown-section');
+                    if (section) section.style.display = '';
+                }
+            })
+            .catch(e => console.error('Failed to load scenario:', e));
     }
 
     // ── WebSocket Connection ──────────────────────────────────
@@ -81,7 +148,6 @@
             // Re-derive status based on session's channels
             let status;
             if (myChannels.length === 0) {
-                // No channels triggered in this session → all nominal
                 status = 'NOMINAL';
             } else {
                 const myActive = (info.active_faults || []).filter(f => myChannels.includes(f));
@@ -194,6 +260,7 @@
     };
 
     // ── Initialize ────────────────────────────────────────────
+    initScenario();
     connect();
     pollStatus();
     pollInterval = setInterval(pollStatus, 2000);

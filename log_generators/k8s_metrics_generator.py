@@ -21,6 +21,7 @@ import uuid
 from datetime import datetime, timezone
 
 from app.telemetry import OTLPClient, _format_attributes, SCHEMA_URL, _now_ns
+from app.config import ACTIVE_SCENARIO, NAMESPACE
 
 logger = logging.getLogger("k8s-metrics-generator")
 
@@ -32,55 +33,22 @@ CLUSTER_SCOPE = "github.com/open-telemetry/opentelemetry-collector-contrib/recei
 K8S_OBJECTS_SCOPE = "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/k8sobjectsreceiver"
 SCOPE_VERSION = "0.115.0"
 
-# ── NOVA-7 services mapped to K8s pods ──────────────────────────────────────
-# All 9 services (kept for backward compat references)
-SERVICES = [
-    "mission-control", "fuel-system", "ground-systems", "navigation",
-    "comms-array", "payload-monitor", "sensor-validator", "telemetry-relay",
-    "range-safety",
-]
+# ── Load from active scenario ────────────────────────────────────────────────
+def _load_scenario_data():
+    from scenarios import get_scenario
+    scenario = get_scenario(ACTIVE_SCENARIO)
+    return list(scenario.services.keys()), scenario.k8s_clusters
 
-# Per-cloud cluster definitions — each cloud runs the 3 services assigned to it
-CLUSTERS = [
-    {
-        "name": "nova7-eks-cluster",
-        "provider": "aws",
-        "platform": "aws_eks",
-        "region": "us-east-1",
-        "zones": ["us-east-1a", "us-east-1b", "us-east-1c"],
-        "os_description": "Amazon Linux 2",
-        "services": ["mission-control", "fuel-system", "ground-systems"],
-    },
-    {
-        "name": "nova7-gke-cluster",
-        "provider": "gcp",
-        "platform": "gcp_gke",
-        "region": "us-central1",
-        "zones": ["us-central1-a", "us-central1-b", "us-central1-c"],
-        "os_description": "Container-Optimized OS",
-        "services": ["navigation", "comms-array", "payload-monitor"],
-    },
-    {
-        "name": "nova7-aks-cluster",
-        "provider": "azure",
-        "platform": "azure_aks",
-        "region": "eastus",
-        "zones": ["eastus-1", "eastus-2", "eastus-3"],
-        "os_description": "Ubuntu 22.04 LTS",
-        "services": ["sensor-validator", "telemetry-relay", "range-safety"],
-    },
-]
+SERVICES, CLUSTERS = _load_scenario_data()
 
-# Legacy single-cluster config (used by warning event logs)
+# Legacy single-cluster config (used by warning event logs) — use first cluster
 CLOUD_CONFIG = {
-    "provider": "aws",
-    "platform": "aws_eks",
-    "region": "us-east-1",
-    "zones": ["us-east-1a", "us-east-1b", "us-east-1c"],
-    "os_description": "Amazon Linux 2",
+    "provider": CLUSTERS[0]["provider"] if CLUSTERS else "aws",
+    "platform": CLUSTERS[0]["platform"] if CLUSTERS else "aws_eks",
+    "region": CLUSTERS[0]["region"] if CLUSTERS else "us-east-1",
+    "zones": CLUSTERS[0]["zones"] if CLUSTERS else ["us-east-1a"],
+    "os_description": CLUSTERS[0].get("os_description", "Linux") if CLUSTERS else "Linux",
 }
-
-NAMESPACE = "nova7"
 
 
 def _init_pod_data(cluster: dict, seed_offset: int = 0) -> dict:

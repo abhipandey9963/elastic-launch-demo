@@ -4,8 +4,8 @@
 Generates realistic host metrics matching the OTel hostmetricsreceiver scraper
 scope names, so Elastic's Infrastructure UI recognizes them as host metrics.
 
-Generates for 3 hosts (one per cloud: AWS, GCP, Azure) matching NOVA-7's
-multi-cloud architecture.
+Generates for 3 hosts (one per cloud: AWS, GCP, Azure) matching the active
+scenario's multi-cloud architecture.
 
 Usage (standalone):
     python3 -m log_generators.host_metrics_generator
@@ -21,6 +21,7 @@ import threading
 import time
 
 from app.telemetry import OTLPClient, _format_attributes, SCHEMA_URL, _now_ns
+from app.config import ACTIVE_SCENARIO
 
 logger = logging.getLogger("host-metrics-generator")
 
@@ -39,87 +40,13 @@ SCRAPERS = {
     "processes": f"{SCRAPER_BASE}/processesscraper",
 }
 
-# ── Host definitions (one per cloud provider) ────────────────────────────────
-HOSTS = [
-    {
-        "host.name": "nova7-aws-host-01",
-        "host.id": "i-0a1b2c3d4e5f67890",
-        "host.arch": "amd64",
-        "host.type": "m5.xlarge",
-        "host.image.id": "ami-0abcdef1234567890",
-        "host.cpu.model.name": "Intel(R) Xeon(R) Platinum 8175M CPU @ 2.50GHz",
-        "host.cpu.vendor.id": "GenuineIntel",
-        "host.cpu.family": "6",
-        "host.cpu.model.id": "85",
-        "host.cpu.stepping": "4",
-        "host.cpu.cache.l2.size": 1048576,
-        "host.ip": ["10.0.1.42", "172.16.0.10"],
-        "host.mac": ["0a:1b:2c:3d:4e:5f", "0a:1b:2c:3d:4e:60"],
-        "os.type": "linux",
-        "os.description": "Amazon Linux 2023.6.20250115",
-        "cloud.provider": "aws",
-        "cloud.platform": "aws_ec2",
-        "cloud.region": "us-east-1",
-        "cloud.availability_zone": "us-east-1a",
-        "cloud.account.id": "123456789012",
-        "cloud.instance.id": "i-0a1b2c3d4e5f67890",
-        "cpu_count": 4,
-        "memory_total_bytes": 16 * 1024 * 1024 * 1024,  # 16 GiB
-        "disk_total_bytes": 200 * 1024 * 1024 * 1024,   # 200 GiB
-    },
-    {
-        "host.name": "nova7-gcp-host-01",
-        "host.id": "5649812345678901234",
-        "host.arch": "amd64",
-        "host.type": "e2-standard-4",
-        "host.image.id": "projects/debian-cloud/global/images/debian-12-bookworm-v20250115",
-        "host.cpu.model.name": "Intel(R) Xeon(R) CPU @ 2.20GHz",
-        "host.cpu.vendor.id": "GenuineIntel",
-        "host.cpu.family": "6",
-        "host.cpu.model.id": "85",
-        "host.cpu.stepping": "7",
-        "host.cpu.cache.l2.size": 1048576,
-        "host.ip": ["10.128.0.15", "10.128.0.16"],
-        "host.mac": ["42:01:0a:80:00:0f", "42:01:0a:80:00:10"],
-        "os.type": "linux",
-        "os.description": "Debian GNU/Linux 12 (bookworm)",
-        "cloud.provider": "gcp",
-        "cloud.platform": "gcp_compute_engine",
-        "cloud.region": "us-central1",
-        "cloud.availability_zone": "us-central1-a",
-        "cloud.account.id": "nova7-project-prod",
-        "cloud.instance.id": "5649812345678901234",
-        "cpu_count": 4,
-        "memory_total_bytes": 16 * 1024 * 1024 * 1024,
-        "disk_total_bytes": 100 * 1024 * 1024 * 1024,
-    },
-    {
-        "host.name": "nova7-azure-host-01",
-        "host.id": "/subscriptions/abc-def/resourceGroups/nova7-rg/providers/Microsoft.Compute/virtualMachines/nova7-vm-01",
-        "host.arch": "amd64",
-        "host.type": "Standard_D4s_v3",
-        "host.image.id": "Canonical:0001-com-ubuntu-server-jammy:22_04-lts-gen2:latest",
-        "host.cpu.model.name": "Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz",
-        "host.cpu.vendor.id": "GenuineIntel",
-        "host.cpu.family": "6",
-        "host.cpu.model.id": "106",
-        "host.cpu.stepping": "6",
-        "host.cpu.cache.l2.size": 1310720,
-        "host.ip": ["10.1.0.4", "10.1.0.5"],
-        "host.mac": ["00:0d:3a:5a:4b:3c", "00:0d:3a:5a:4b:3d"],
-        "os.type": "linux",
-        "os.description": "Ubuntu 22.04.5 LTS",
-        "cloud.provider": "azure",
-        "cloud.platform": "azure_vm",
-        "cloud.region": "eastus",
-        "cloud.availability_zone": "eastus-1",
-        "cloud.account.id": "abc-def-ghi-jkl",
-        "cloud.instance.id": "nova7-vm-01",
-        "cpu_count": 4,
-        "memory_total_bytes": 16 * 1024 * 1024 * 1024,
-        "disk_total_bytes": 128 * 1024 * 1024 * 1024,
-    },
-]
+# ── Host definitions from active scenario ─────────────────────────────────────
+def _load_hosts():
+    from scenarios import get_scenario
+    return get_scenario(ACTIVE_SCENARIO).hosts
+
+HOSTS = _load_hosts()
+
 
 
 def _build_host_resource(host_cfg: dict) -> dict:

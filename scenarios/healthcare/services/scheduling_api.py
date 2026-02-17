@@ -50,7 +50,7 @@ class SchedulingAPIService(BaseService):
         slot = f"{random.randint(7, 17):02d}:{random.choice(['00', '15', '30', '45'])}"
         self.emit_log(
             "INFO",
-            f"Appointment booked: {patient_id} with {provider} at {slot} in {resource}",
+            f"[SCHED] appointment_booked patient={patient_id} provider={provider} slot={slot} resource={resource} status=CONFIRMED",
             {
                 "operation": "appointment_book",
                 "scheduling.patient_id": patient_id,
@@ -67,7 +67,7 @@ class SchedulingAPIService(BaseService):
         status = random.choice(["occupied", "vacant", "cleaning", "reserved"])
         self.emit_log(
             "INFO",
-            f"Bed update: {unit} bed {bed} status changed to {status}",
+            f"[SCHED] bed_update unit={unit} bed={bed} new_status={status} adt_sync=OK",
             {
                 "operation": "bed_update",
                 "bed.unit": unit,
@@ -81,7 +81,7 @@ class SchedulingAPIService(BaseService):
         occupied = int(total_beds * random.uniform(0.78, 0.95))
         self.emit_log(
             "INFO",
-            f"Bed census: {occupied}/{total_beds} beds occupied across {len(self._units)} units — ADT sync current",
+            f"[SCHED] bed_census occupied={occupied}/{total_beds} units={len(self._units)} adt_sync=CURRENT",
             {
                 "operation": "bed_census",
                 "census.total_beds": total_beds,

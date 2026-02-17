@@ -53,7 +53,7 @@ class PharmacySystemService(BaseService):
         route = random.choice(["IV", "PO", "IM", "SQ", "topical"])
         self.emit_log(
             "INFO",
-            f"Medication dispensed: {rx_id} {med} via {route} for {patient_id} — verified",
+            f"[PHARM] dispense rx={rx_id} med={med} route={route} patient={patient_id} status=VERIFIED",
             {
                 "operation": "dispense",
                 "pharmacy.rx_id": rx_id,
@@ -71,7 +71,7 @@ class PharmacySystemService(BaseService):
         check_ms = random.randint(5, 40)
         self.emit_log(
             "INFO",
-            f"Drug interaction check: {med_a} + {med_b} — severity {severity}, {check_ms}ms",
+            f"[PHARM] ddi_screen drug_a={med_a} drug_b={med_b} severity={severity} eval_ms={check_ms} status=CLEAR",
             {
                 "operation": "interaction_check",
                 "pharmacy.drug_a": med_a,
@@ -85,7 +85,7 @@ class PharmacySystemService(BaseService):
         formulary_items = random.randint(2800, 3200)
         self.emit_log(
             "INFO",
-            f"Formulary status: {formulary_items} items active, {self._orders_dispensed} dispensed — CPOE pipeline nominal",
+            f"[PHARM] formulary_status items={formulary_items} dispensed={self._orders_dispensed} cpoe_pipeline=NOMINAL",
             {
                 "operation": "formulary_status",
                 "formulary.active_items": formulary_items,

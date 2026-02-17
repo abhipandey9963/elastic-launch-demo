@@ -54,13 +54,15 @@ class GroundSystemsService(BaseService):
             value = round(random.uniform(low, high), 1)
             self.emit_metric(f"ground.weather.{param}", value, unit)
 
+        wind = round(random.uniform(2.0, 12.0), 1)
+        vis = round(random.uniform(8.0, 15.0), 1)
         self.emit_log(
             "INFO",
-            "Weather conditions nominal — all parameters within launch constraints",
+            f"[GND] weather_check wind={wind}kts visibility={vis}km ceiling=12000ft constraint=WITHIN status=GO",
             {
                 "operation": "weather_check",
-                "weather.wind_speed_knots": round(random.uniform(2.0, 12.0), 1),
-                "weather.visibility_km": round(random.uniform(8.0, 15.0), 1),
+                "weather.wind_speed_knots": wind,
+                "weather.visibility_km": vis,
                 "weather.status": "GO",
             },
         )
@@ -69,7 +71,7 @@ class GroundSystemsService(BaseService):
         system = random.choice(self.PAD_SYSTEMS)
         self.emit_log(
             "INFO",
-            f"Pad system check: {system} — status NOMINAL",
+            f"[GND] pad_check system={system} result=PASS status=NOMINAL",
             {
                 "operation": "pad_check",
                 "pad.system": system,
@@ -89,7 +91,7 @@ class GroundSystemsService(BaseService):
         item = random.choice(gse_items)
         self.emit_log(
             "INFO",
-            f"GSE status: {item} — operational",
+            f"[GND] gse_check equipment={item} result=OPERATIONAL status=NOMINAL",
             {
                 "operation": "gse_check",
                 "gse.equipment": item,

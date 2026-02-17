@@ -65,7 +65,7 @@ class OrderGatewayService(BaseService):
         latency_us = random.randint(15, 150)
         self.emit_log(
             "INFO",
-            f"Order received: {side} {qty} {symbol} @ ${price} — routed to matching engine in {latency_us}us",
+            f"[OMS] order_received side={side} qty={qty} symbol={symbol} price=${price} latency_us={latency_us} status=ROUTED",
             {
                 "operation": "order_received",
                 "order.side": side,
@@ -82,7 +82,7 @@ class OrderGatewayService(BaseService):
         heartbeat_ms = round(random.uniform(0.5, 3.0), 1)
         self.emit_log(
             "INFO",
-            f"FIX session {session} heartbeat OK — latency {heartbeat_ms}ms",
+            f"[OMS] fix_heartbeat session={session} latency_ms={heartbeat_ms} status=ACTIVE",
             {
                 "operation": "fix_heartbeat",
                 "fix.session": session,
@@ -94,7 +94,7 @@ class OrderGatewayService(BaseService):
     def _emit_throughput_report(self) -> None:
         self.emit_log(
             "INFO",
-            f"Order gateway throughput: {self._order_count} orders processed, all FIX sessions active",
+            f"[OMS] throughput_report total_orders={self._order_count} active_sessions={len(self._fix_sessions)} status=NOMINAL",
             {
                 "operation": "throughput_report",
                 "throughput.total_orders": self._order_count,

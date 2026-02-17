@@ -79,7 +79,7 @@ class FuelSystemService(BaseService):
             self.emit_metric(sensor["metric"], value, sensor["unit"])
             self.emit_log(
                 "INFO",
-                f"{sensor['name']}: {value} {sensor['unit']} — within nominal range",
+                f"[PMS] sensor={sensor_key} reading={value}{sensor['unit']} nominal={sensor['nominal_min']}-{sensor['nominal_max']}{sensor['unit']} status=NOMINAL",
                 {
                     "operation": "sensor_reading",
                     "sensor.name": sensor_key,
@@ -95,7 +95,7 @@ class FuelSystemService(BaseService):
         # Propulsion summary
         self.emit_log(
             "INFO",
-            "Propulsion system check complete — all readings nominal",
+            f"[PMS] system_check sensors={len(self.SENSORS)} failures=0 result=PASS status=NOMINAL",
             {
                 "operation": "system_check",
                 "check.result": "PASS",

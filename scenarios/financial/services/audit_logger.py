@@ -61,7 +61,7 @@ class AuditLoggerService(BaseService):
         ])
         self.emit_log(
             "INFO",
-            f"Audit event logged: stream={stream} seq={seq} type={event_type} — committed",
+            f"[AUDIT] event_logged stream={stream} seq={seq} type={event_type} status=COMMITTED",
             {
                 "operation": "audit_log",
                 "audit.stream": stream,
@@ -76,7 +76,7 @@ class AuditLoggerService(BaseService):
         dest = random.choice(["eu-west-1", "us-west-2"])
         self.emit_log(
             "INFO",
-            f"Replication status: eastus -> {dest} lag {lag_ms}ms — within threshold",
+            f"[AUDIT] replication_status source=eastus dest={dest} lag_ms={lag_ms} status=SYNCED",
             {
                 "operation": "replication_status",
                 "replication.source": "eastus",
@@ -91,7 +91,7 @@ class AuditLoggerService(BaseService):
         total_events = sum(self._sequence_counters.values())
         self.emit_log(
             "INFO",
-            f"Audit integrity check: {streams_ok}/{streams_ok} streams valid, {total_events} total events — hash chain intact",
+            f"[AUDIT] integrity_check streams_valid={streams_ok}/{streams_ok} total_events={total_events} hash_chain=VALID",
             {
                 "operation": "integrity_check",
                 "integrity.streams_valid": streams_ok,

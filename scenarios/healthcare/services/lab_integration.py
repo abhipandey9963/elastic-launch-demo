@@ -50,7 +50,7 @@ class LabIntegrationService(BaseService):
         flag = "ABNORMAL" if abnormal else "NORMAL"
         self.emit_log(
             "INFO",
-            f"Lab result delivered: order {order_id} test {test} TAT {tat_min}min flag {flag}",
+            f"[LIS] result_delivered order={order_id} test={test} tat={tat_min}min flag={flag} status=DELIVERED",
             {
                 "operation": "result_delivery",
                 "lab.order_id": order_id,
@@ -67,7 +67,7 @@ class LabIntegrationService(BaseService):
         patient_id = f"PT-{random.randint(100000, 999999)}"
         self.emit_log(
             "INFO",
-            f"Lab order processed: {priority} {test} for {patient_id} — specimen received",
+            f"[LIS] order_received test={test} priority={priority} patient={patient_id} specimen=RECEIVED status=IN_PROGRESS",
             {
                 "operation": "order_processing",
                 "lab.test_code": test,
@@ -82,7 +82,7 @@ class LabIntegrationService(BaseService):
         in_progress = random.randint(10, 40)
         self.emit_log(
             "INFO",
-            f"Lab queue status: {pending} pending, {in_progress} in-progress, {self._results_processed} completed — pipeline nominal",
+            f"[LIS] queue_status pending={pending} in_progress={in_progress} completed={self._results_processed} pipeline=NOMINAL",
             {
                 "operation": "queue_status",
                 "queue.pending": pending,

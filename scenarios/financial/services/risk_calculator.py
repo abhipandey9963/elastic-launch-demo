@@ -63,7 +63,7 @@ class RiskCalculatorService(BaseService):
         utilization = round(exposure_m / desk["limit_m"] * 100, 1)
         self.emit_log(
             "INFO",
-            f"Pre-trade risk check: desk {desk_name} exposure ${exposure_m}M / ${desk['limit_m']}M limit ({utilization}%) — PASS",
+            f"[RISK] pre_trade_check desk={desk_name} exposure_m=${exposure_m} limit_m=${desk['limit_m']} utilization={utilization}% asset_class={desk['asset_class']} result=PASS",
             {
                 "operation": "risk_check",
                 "risk.desk": desk_name,
@@ -80,7 +80,7 @@ class RiskCalculatorService(BaseService):
         margin_calls = random.randint(0, 3)
         self.emit_log(
             "INFO",
-            f"Margin sweep: {accounts_checked} accounts checked, {margin_calls} margin calls pending",
+            f"[RISK] margin_sweep accounts_checked={accounts_checked} calls_pending={margin_calls} status=OK",
             {
                 "operation": "margin_sweep",
                 "margin.accounts_checked": accounts_checked,
@@ -94,7 +94,7 @@ class RiskCalculatorService(BaseService):
         scenarios = random.randint(10000, 50000)
         self.emit_log(
             "INFO",
-            f"VaR calculation complete: 95%=${var_95}M, 99%=${var_99}M ({scenarios} scenarios) — within limits",
+            f"[RISK] var_calculation var_95=${var_95}M var_99=${var_99}M scenarios={scenarios} status=WITHIN_LIMITS",
             {
                 "operation": "var_calculation",
                 "var.95_percentile_m": var_95,

@@ -53,7 +53,7 @@ class AnalyticsPipelineService(BaseService):
         latency_ms = round(random.uniform(5.0, 50.0), 1)
         self.emit_log(
             "INFO",
-            f"Batch ingested on '{pipeline}': {batch_size} '{event_type}' events in {latency_ms}ms",
+            f"[Analytics] ingest pipeline={pipeline} event_type={event_type} batch={batch_size} latency={latency_ms}ms partitions=16",
             {
                 "operation": "event_ingested",
                 "analytics.pipeline": pipeline,
@@ -69,7 +69,7 @@ class AnalyticsPipelineService(BaseService):
         partitions = random.randint(8, 32)
         self.emit_log(
             "INFO",
-            f"Pipeline '{pipeline}' health: lag {consumer_lag} events, {partitions} partitions active",
+            f"[Analytics] pipeline_health name={pipeline} consumer_lag={consumer_lag} partitions={partitions} throughput=4201/s",
             {
                 "operation": "pipeline_health",
                 "pipeline.name": pipeline,
@@ -81,7 +81,7 @@ class AnalyticsPipelineService(BaseService):
     def _emit_pipeline_summary(self) -> None:
         self.emit_log(
             "INFO",
-            f"Analytics summary: {self._events_ingested} events ingested across {len(self._pipelines)} pipelines",
+            f"[Analytics] summary events_ingested={self._events_ingested} pipelines={len(self._pipelines)} buffer_pct=32.1% lag_s=0.4",
             {
                 "operation": "pipeline_summary",
                 "summary.events_ingested": self._events_ingested,

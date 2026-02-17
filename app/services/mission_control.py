@@ -52,7 +52,7 @@ class MissionControlService(BaseService):
         latency = round(random.uniform(1.2, 8.5), 1)
         self.emit_log(
             "INFO",
-            f"Subsystem poll: {subsystem} responded in {latency}ms — status NOMINAL",
+            f"[MCC] subsystem={subsystem} poll_latency={latency}ms response=ACK status=NOMINAL",
             {
                 "operation": "subsystem_poll",
                 "target.subsystem": subsystem,
@@ -64,24 +64,24 @@ class MissionControlService(BaseService):
     def _emit_phase_log(self) -> None:
         phases_messages = {
             "PRE-LAUNCH": [
-                "Pre-launch checks in progress — all systems reporting",
-                "Vehicle power nominal, telemetry links active",
-                "Launch director confirms readiness review underway",
+                "[MCC] phase=PRE-LAUNCH checks=IN_PROGRESS systems=ALL_REPORTING status=NOMINAL",
+                "[MCC] phase=PRE-LAUNCH vehicle_pwr=NOMINAL telem_links=ACTIVE status=GO",
+                "[MCC] phase=PRE-LAUNCH readiness_review=UNDERWAY director=CONFIRMED status=NOMINAL",
             ],
             "COUNTDOWN": [
-                "Countdown sequence active — monitoring all subsystems",
-                "Go/No-Go poll in progress",
-                "Final systems verification proceeding nominally",
+                "[MCC] phase=COUNTDOWN sequence=ACTIVE subsystems=MONITORING status=NOMINAL",
+                "[MCC] phase=COUNTDOWN go_nogo_poll=IN_PROGRESS responses=PENDING status=NOMINAL",
+                "[MCC] phase=COUNTDOWN verification=FINAL systems=ALL_GO status=NOMINAL",
             ],
             "LAUNCH": [
-                "Main engine ignition confirmed",
-                "Vehicle clearing tower, all engines nominal",
-                "Thrust nominal, trajectory on profile",
+                "[MCC] phase=LAUNCH event=MECO_IGNITION engines=ALL_NOMINAL status=GO",
+                "[MCC] phase=LAUNCH event=TOWER_CLEAR engines=NOMINAL thrust=100% status=GO",
+                "[MCC] phase=LAUNCH thrust=NOMINAL trajectory=ON_PROFILE status=GO",
             ],
             "ASCENT": [
-                "Ascending through max-Q, structural loads nominal",
-                "Stage separation approaching, systems go",
-                "Telemetry nominal, tracking stable",
+                "[MCC] phase=ASCENT event=MAX_Q structural_loads=NOMINAL status=GO",
+                "[MCC] phase=ASCENT event=STAGE_SEP_APPROACH systems=ALL_GO status=NOMINAL",
+                "[MCC] phase=ASCENT telemetry=NOMINAL tracking=STABLE status=GO",
             ],
         }
         messages = phases_messages.get(self._phase, phases_messages["PRE-LAUNCH"])
@@ -92,7 +92,7 @@ class MissionControlService(BaseService):
         status = "NOMINAL" if not active else "DEGRADED"
         self.emit_log(
             "INFO",
-            f"Health summary: {len(self._subsystems)} subsystems polled — overall status {status}",
+            f"[MCC] health_check subsystems={len(self._subsystems)} alerts={len(active)} overall={status}",
             {
                 "operation": "health_summary",
                 "health.subsystem_count": len(self._subsystems),

@@ -51,7 +51,7 @@ class AuthGatewayService(BaseService):
         player_id = f"PLR-{random.randint(100000, 999999)}"
         self.emit_log(
             "INFO",
-            f"Auth request via {provider} for {player_id} completed in {latency_ms}ms — session created",
+            f"[Auth] login provider={provider} player={player_id} latency={latency_ms}ms result=SUCCESS session_created=true",
             {
                 "operation": "auth_request",
                 "auth.provider": provider,
@@ -67,7 +67,7 @@ class AuthGatewayService(BaseService):
         session_id = f"SESS-{random.randint(10000000, 99999999)}"
         self.emit_log(
             "INFO",
-            f"Token validated for session {session_id} — age {token_age_min}min, TTL {ttl_min}min remaining",
+            f"[Auth] token_validate session={session_id} age={token_age_min}min ttl={ttl_min}min status=VALID algo=RS256",
             {
                 "operation": "token_validation",
                 "token.session_id": session_id,
@@ -80,7 +80,7 @@ class AuthGatewayService(BaseService):
     def _emit_auth_summary(self) -> None:
         self.emit_log(
             "INFO",
-            f"Auth summary: {self._auth_requests} requests processed across {len(self._providers)} providers",
+            f"[Auth] summary total_requests={self._auth_requests} providers={len(self._providers)} active_sessions=84201 refresh_rate=412/s",
             {
                 "operation": "auth_summary",
                 "summary.total_requests": self._auth_requests,

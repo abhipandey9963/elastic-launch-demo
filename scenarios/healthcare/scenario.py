@@ -123,420 +123,515 @@ class HealthcareScenario(BaseScenario):
                 "name": "HL7 Message Parsing Failure",
                 "subsystem": "clinical_records",
                 "vehicle_section": "adt_interface",
-                "error_type": "HL7ParseException",
+                "error_type": "HL7-ACK-AE",
                 "sensor_type": "hl7_parser",
                 "affected_services": ["ehr-system", "lab-integration"],
                 "cascade_services": ["patient-monitor", "clinical-alerts"],
                 "description": "HL7 v2.x message parsing fails due to malformed segments or unsupported message types in the ADT interface",
-                "error_message": "HL7 parse failure: message type {msg_type} segment {hl7_segment} at position {position} for patient MRN {mrn}",
+                "error_message": "[EHR] HL7-ACK-AE: msg_type={msg_type} segment={hl7_segment} position={position} patient=MRN-{mrn}",
                 "stack_trace": (
-                    "Traceback (most recent call last):\n"
-                    '  File "clinical/hl7_parser.py", line 342, in parse_message\n'
-                    "    segment = self._decode_segment(raw_segment, encoding)\n"
-                    '  File "clinical/hl7_parser.py", line 298, in _decode_segment\n'
-                    "    return self.segment_registry.parse(segment_id, fields)\n"
-                    '  File "clinical/segment_registry.py", line 156, in parse\n'
-                    '    raise HL7ParseException(f"Failed to parse {segment_id} segment at position {position}")\n'
-                    "HL7ParseException: Failed to parse {hl7_segment} segment at position {position} in {msg_type} message"
+                    "MSH|^~\\&|EHR-CORE|FACILITY-01|LAB-LIS|LAB-01|20260217143052||{msg_type}|MSG-{mrn}.001|P|2.5.1|||AL|NE\n"
+                    "EVN|A01|20260217143052|||ADMIN-SYS\n"
+                    "PID|1||{mrn}^^^FACILITY-01^MR||DOE^JANE^M||19650315|F|||123 MAIN ST^^ANYTOWN^ST^12345||555-0100|||M|NON|{encounter_id}\n"
+                    "{hl7_segment}|<<< PARSE ERROR at position {position} >>>\n"
+                    "--- ACK ---\n"
+                    "MSH|^~\\&|LAB-LIS|LAB-01|EHR-CORE|FACILITY-01|20260217143052||ACK^{msg_type}|ACK-{mrn}.001|P|2.5.1\n"
+                    "MSA|AE|MSG-{mrn}.001|HL7-ACK-AE: Segment {hl7_segment} at position {position} contains invalid field encoding\n"
+                    "ERR|^^^207&Application internal error&HL70357|{hl7_segment}^{position}|E|||Invalid segment structure"
                 ),
             },
             2: {
                 "name": "Vital Signs Alert Storm",
                 "subsystem": "vital_signs",
                 "vehicle_section": "vitals_engine",
-                "error_type": "VitalAlertStormException",
+                "error_type": "VITAL-ALERT-STORM",
                 "sensor_type": "vital_signs_monitor",
                 "affected_services": ["patient-monitor", "clinical-alerts"],
                 "cascade_services": ["ehr-system"],
                 "description": "Excessive simultaneous vital sign alerts overwhelming the alerting pipeline from bedside monitors",
-                "error_message": "Vital alert storm: {alert_count} alerts in {window_seconds}s from unit {nursing_unit}, patient {patient_id} HR {heart_rate} SpO2 {spo2}%",
+                "error_message": "[MONITOR] VITAL-ALERT-STORM: unit={nursing_unit} alerts={alert_count} window={window_seconds}s patient={patient_id} hr={heart_rate} spo2={spo2}%",
                 "stack_trace": (
-                    "Traceback (most recent call last):\n"
-                    '  File "vitals/alert_engine.py", line 218, in process_vitals\n'
-                    "    self._evaluate_thresholds(patient_id, readings)\n"
-                    '  File "vitals/alert_engine.py", line 195, in _evaluate_thresholds\n'
-                    "    self._check_storm_condition(unit, active_alerts)\n"
-                    '  File "vitals/alert_engine.py", line 172, in _check_storm_condition\n'
-                    '    raise VitalAlertStormException(f"Alert storm: {count} alerts in {window}s on {unit}")\n'
-                    "VitalAlertStormException: {alert_count} alerts in {window_seconds}s on unit {nursing_unit}"
+                    "=== BEDSIDE MONITOR ALERT SUMMARY — {nursing_unit} ===\n"
+                    "Interval: {window_seconds}s | Total Alerts: {alert_count} | Threshold: 10/60s\n"
+                    "------------------------------------------------------------------------\n"
+                    "PATIENT     | PARAM   | VALUE   | LIMIT   | PRIORITY  | STATUS\n"
+                    "------------------------------------------------------------------------\n"
+                    "{patient_id} | HR      | {heart_rate} bpm | 40-150  | CRITICAL  | UNACKED\n"
+                    "{patient_id} | SpO2    | {spo2}%    | >90%    | HIGH      | UNACKED\n"
+                    "{patient_id} | RR      | 28 br/m | 8-25    | MEDIUM    | UNACKED\n"
+                    "PT-XXXXXX  | BP-SYS  | 185 mmHg| <180    | HIGH      | UNACKED\n"
+                    "PT-XXXXXX  | TEMP    | 39.8 C  | <38.5   | MEDIUM    | ESCALATED\n"
+                    "------------------------------------------------------------------------\n"
+                    "VITAL-ALERT-STORM: {alert_count} alerts in {window_seconds}s exceeds storm threshold on {nursing_unit}\n"
+                    "ACTION: Alert pipeline saturated — downstream CDS rule evaluation delayed"
                 ),
             },
             3: {
                 "name": "Lab Result Delivery Delay",
                 "subsystem": "laboratory",
                 "vehicle_section": "lab_interface",
-                "error_type": "LabResultDelayException",
+                "error_type": "LIS-RESULT-DELAY",
                 "sensor_type": "lab_result_queue",
                 "affected_services": ["lab-integration", "ehr-system"],
                 "cascade_services": ["pharmacy-system", "clinical-alerts"],
                 "description": "Laboratory result delivery exceeds critical TAT threshold, delaying clinical decisions",
-                "error_message": "Lab result delay: order {lab_order_id} test {test_code} TAT {tat_minutes}min exceeds {max_tat}min threshold for patient {patient_id}",
+                "error_message": "[LIS] LIS-RESULT-DELAY: order={lab_order_id} test={test_code} tat={tat_minutes}min sla={max_tat}min patient={patient_id}",
                 "stack_trace": (
-                    "Traceback (most recent call last):\n"
-                    '  File "laboratory/result_router.py", line 167, in deliver_result\n'
-                    "    tat = self._compute_turnaround(order_id, completed_at)\n"
-                    '  File "laboratory/result_router.py", line 145, in _compute_turnaround\n'
-                    "    self._check_tat_threshold(test_code, tat)\n"
-                    '  File "laboratory/result_router.py", line 128, in _check_tat_threshold\n'
-                    '    raise LabResultDelayException(f"TAT {tat}min exceeds {threshold}min for {test_code}")\n'
-                    "LabResultDelayException: Order {lab_order_id} TAT {tat_minutes}min exceeds {max_tat}min threshold"
+                    "H|\\^&|||LIS-CORE^Lab Integration|||||LIS2-A2||P|1|20260217143052\n"
+                    "P|1||{patient_id}||DOE^JANE||19650315|F\n"
+                    "OBR|1|{lab_order_id}||{test_code}|||20260217143052||||||||SERUM\n"
+                    "OBX|1|NM|{test_code}^Result^^LIS||--PENDING--|mg/dL|3.5-5.0|N|||F\n"
+                    "--- TAT BREACH ---\n"
+                    "Order: {lab_order_id} | Test: {test_code} | Collected: 20260217143052\n"
+                    "TAT Elapsed: {tat_minutes} min | SLA Target: {max_tat} min | Status: BREACHED\n"
+                    "Patient: {patient_id} | Priority: STAT | Specimen: SERUM\n"
+                    "LIS-RESULT-DELAY: Result pending for {tat_minutes}min exceeds {max_tat}min SLA\n"
+                    "L|1|N"
                 ),
             },
             4: {
                 "name": "DICOM Transfer Failure",
                 "subsystem": "radiology",
                 "vehicle_section": "pacs_gateway",
-                "error_type": "DICOMTransferException",
+                "error_type": "DICOM-STORE-FAIL",
                 "sensor_type": "dicom_transfer",
                 "affected_services": ["imaging-service", "ehr-system"],
                 "cascade_services": ["clinical-alerts", "data-warehouse"],
                 "description": "DICOM C-STORE or C-MOVE operation fails during image transfer between modality and PACS",
-                "error_message": "DICOM transfer failure: study {dicom_study_uid} modality {modality} operation {dicom_operation} error code {dicom_error_code}",
+                "error_message": "[PACS] DICOM-STORE-FAIL: study={dicom_study_uid} modality={modality} operation={dicom_operation} status={dicom_error_code}",
                 "stack_trace": (
-                    "Traceback (most recent call last):\n"
-                    '  File "radiology/dicom_handler.py", line 445, in transfer_study\n'
-                    "    association = self._establish_association(ae_title, scp_host)\n"
-                    '  File "radiology/dicom_handler.py", line 412, in _establish_association\n'
-                    "    result = self._send_c_store(dataset, association)\n"
-                    '  File "radiology/dicom_handler.py", line 389, in _send_c_store\n'
-                    '    raise DICOMTransferException(f"C-STORE failed for study {study_uid}: {error_code}")\n'
-                    "DICOMTransferException: {dicom_operation} failed for study {dicom_study_uid}: error {dicom_error_code}"
+                    "A-ASSOCIATE-RQ PDU\n"
+                    "  Called AE Title:  PACS-SCP-01\n"
+                    "  Calling AE Title: {modality}-SCU\n"
+                    "  Application Context: 1.2.840.10008.3.1.1.1\n"
+                    "  Presentation Context:\n"
+                    "    Abstract Syntax: 1.2.840.10008.5.1.4.1.1.2 ({modality} Image Storage)\n"
+                    "    Transfer Syntax: 1.2.840.10008.1.2.1 (Explicit VR Little Endian)\n"
+                    "A-ASSOCIATE-AC — Association accepted\n"
+                    "{dicom_operation}-RQ | Study: {dicom_study_uid} | Series: 1 of 3\n"
+                    "{dicom_operation}-RSP | Status: {dicom_error_code} | FAILURE\n"
+                    "  Error Comment: DICOM-STORE-FAIL — Storage commitment refused, dataset mismatch\n"
+                    "  Affected SOP Instance: {dicom_study_uid}.1.1\n"
+                    "A-RELEASE-RQ\n"
+                    "A-RELEASE-RP — Association released"
                 ),
             },
             5: {
                 "name": "Medication Interaction Alert Overflow",
                 "subsystem": "medication",
                 "vehicle_section": "cpoe_engine",
-                "error_type": "MedInteractionException",
+                "error_type": "CPOE-DDI-CRITICAL",
                 "sensor_type": "drug_interaction_checker",
                 "affected_services": ["pharmacy-system", "ehr-system"],
                 "cascade_services": ["clinical-alerts"],
                 "description": "Drug interaction checking engine overwhelmed by excessive concurrent medication orders",
-                "error_message": "Medication interaction overflow: {interaction_count} interactions queued, patient {patient_id} medication {medication_id} severity {severity_level}",
+                "error_message": "[PHARM] CPOE-DDI-CRITICAL: patient={patient_id} med={medication_id} interactions_queued={interaction_count} severity={severity_level}",
                 "stack_trace": (
-                    "Traceback (most recent call last):\n"
-                    '  File "pharmacy/interaction_engine.py", line 267, in check_interactions\n'
-                    "    results = self._screen_drug_pairs(medication_list, patient_allergies)\n"
-                    '  File "pharmacy/interaction_engine.py", line 245, in _screen_drug_pairs\n'
-                    "    self._check_queue_capacity(pending_count)\n"
-                    '  File "pharmacy/interaction_engine.py", line 218, in _check_queue_capacity\n'
-                    '    raise MedInteractionException(f"Interaction queue overflow: {pending_count} pending checks")\n'
-                    "MedInteractionException: Interaction queue overflow: {interaction_count} pending for medication {medication_id}"
+                    "=== DRUG INTERACTION SCREENING — CPOE ENGINE ===\n"
+                    "Patient: {patient_id} | New Order: {medication_id}\n"
+                    "Severity: {severity_level} | Queue Depth: {interaction_count}\n"
+                    "------------------------------------------------------------------------\n"
+                    "DRUG-A          | DRUG-B          | TYPE     | SEVERITY  | ACTION\n"
+                    "------------------------------------------------------------------------\n"
+                    "{medication_id}  | Warfarin 5mg    | PK/PD    | CRITICAL  | BLOCK\n"
+                    "{medication_id}  | Amiodarone 200mg| QT-PROLONG| MAJOR    | WARN\n"
+                    "{medication_id}  | Metformin 1000mg| RENAL    | MODERATE  | MONITOR\n"
+                    "------------------------------------------------------------------------\n"
+                    "CPOE-DDI-CRITICAL: {interaction_count} interaction checks queued\n"
+                    "Screening engine capacity exceeded — new orders held pending review\n"
+                    "Override requires attending physician dual-sign authorization"
                 ),
             },
             6: {
                 "name": "E-Prescribe Transmission Error",
                 "subsystem": "medication",
                 "vehicle_section": "eprescribe_gateway",
-                "error_type": "EPrescribeException",
+                "error_type": "NCPDP-SCRIPT-FAIL",
                 "sensor_type": "ncpdp_transmitter",
                 "affected_services": ["pharmacy-system", "ehr-system"],
                 "cascade_services": ["clinical-alerts", "billing-processor"],
                 "description": "Electronic prescription transmission to external pharmacy via NCPDP SCRIPT fails",
-                "error_message": "E-Prescribe transmission error: Rx {prescription_id} for patient {patient_id} pharmacy NPI {pharmacy_npi} NCPDP status {ncpdp_status}",
+                "error_message": "[PHARM] NCPDP-SCRIPT-FAIL: rx={prescription_id} patient={patient_id} pharmacy_npi={pharmacy_npi} ncpdp_status={ncpdp_status}",
                 "stack_trace": (
-                    "Traceback (most recent call last):\n"
-                    '  File "pharmacy/eprescribe_sender.py", line 312, in transmit_prescription\n'
-                    "    response = self._send_ncpdp_script(rx_message, pharmacy_endpoint)\n"
-                    '  File "pharmacy/eprescribe_sender.py", line 289, in _send_ncpdp_script\n'
-                    "    self._validate_response(response)\n"
-                    '  File "pharmacy/eprescribe_sender.py", line 267, in _validate_response\n'
-                    '    raise EPrescribeException(f"NCPDP transmission failed: status {status}")\n'
-                    "EPrescribeException: Transmission failed for Rx {prescription_id}: NCPDP status {ncpdp_status}"
+                    "--- NCPDP SCRIPT 10.6 MESSAGE TRACE ---\n"
+                    ">>> NEWRX Request\n"
+                    "  UIB+UNOA:0++{prescription_id}+{pharmacy_npi}:D+20260217143052\n"
+                    "  UIH+SCRIPT:010:006:NEWRX+{prescription_id}:P\n"
+                    "  PVD+PC+{pharmacy_npi}:HPI+++COMMUNITY PHARMACY\n"
+                    "  PTT+1+{patient_id}+DOE:JANE+19650315:F\n"
+                    "  DRU+P:MEDICATION:{medication_id}+85+EA+++1\n"
+                    "  UIT+{prescription_id}+7\n"
+                    "  UIZ++1\n"
+                    "<<< STATUS Response\n"
+                    "  STS+{ncpdp_status}:NCPDP-SCRIPT-FAIL\n"
+                    "  FreeText: Transmission rejected — pharmacy NPI {pharmacy_npi} validation failed\n"
+                    "  Rx {prescription_id} for patient {patient_id}: queued for retry"
                 ),
             },
             7: {
                 "name": "Patient Identity Match Failure",
                 "subsystem": "clinical_records",
                 "vehicle_section": "mpi_engine",
-                "error_type": "PatientMatchException",
+                "error_type": "EMPI-MATCH-FAIL",
                 "sensor_type": "mpi_matcher",
                 "affected_services": ["ehr-system", "patient-monitor"],
                 "cascade_services": ["lab-integration", "pharmacy-system"],
                 "description": "Master Patient Index fails to resolve patient identity, risking duplicate records",
-                "error_message": "Patient match failure: MRN {mrn} encounter {encounter_id} match score {match_score}% below threshold {match_threshold}% — potential duplicate",
+                "error_message": "[EHR] EMPI-MATCH-FAIL: mrn={mrn} encounter={encounter_id} score={match_score}% threshold={match_threshold}% action=REVIEW_REQUIRED",
                 "stack_trace": (
-                    "Traceback (most recent call last):\n"
-                    '  File "clinical/mpi_resolver.py", line 178, in resolve_patient\n'
-                    "    candidates = self._search_demographics(demographics)\n"
-                    '  File "clinical/mpi_resolver.py", line 156, in _search_demographics\n'
-                    "    best_match = self._score_candidates(candidates)\n"
-                    '  File "clinical/mpi_resolver.py", line 134, in _score_candidates\n'
-                    '    raise PatientMatchException(f"Match score {score}% below threshold for MRN {mrn}")\n'
-                    "PatientMatchException: MRN {mrn} match score {match_score}% below {match_threshold}% threshold"
+                    "=== EMPI CANDIDATE MATCH TABLE ===\n"
+                    "Query MRN: {mrn} | Encounter: {encounter_id}\n"
+                    "Match Threshold: {match_threshold}% | Algorithm: Probabilistic\n"
+                    "------------------------------------------------------------------------\n"
+                    "CANDIDATE MRN | LAST     | FIRST  | DOB        | SSN-LAST4 | SCORE\n"
+                    "------------------------------------------------------------------------\n"
+                    "MRN-8832104   | DOE      | JANE   | 1965-03-15 | 4589      | {match_score}%\n"
+                    "MRN-7741023   | DOE      | JANE M | 1965-03-15 | 4589      | 42.3%\n"
+                    "MRN-6629817   | DOE      | JEAN   | 1965-04-15 | 4590      | 28.7%\n"
+                    "------------------------------------------------------------------------\n"
+                    "EMPI-MATCH-FAIL: Best score {match_score}% below {match_threshold}% threshold\n"
+                    "Action: REVIEW_REQUIRED — potential duplicate for {mrn}\n"
+                    "HIM worklist item created, manual identity resolution pending"
                 ),
             },
             8: {
                 "name": "Bed Management Sync Error",
                 "subsystem": "scheduling",
                 "vehicle_section": "bed_board",
-                "error_type": "BedManagementException",
+                "error_type": "SCHED-BED-MGMT-FAIL",
                 "sensor_type": "bed_tracker",
                 "affected_services": ["scheduling-api", "ehr-system"],
                 "cascade_services": ["clinical-alerts"],
                 "description": "Bed management system loses synchronization with ADT events, showing stale census data",
-                "error_message": "Bed sync error: unit {nursing_unit} bed {bed_id} shows {bed_status} but ADT event {adt_event} contradicts — last sync {sync_lag_seconds}s ago",
+                "error_message": "[SCHED] SCHED-BED-MGMT-FAIL: unit={nursing_unit} bed={bed_id} status={bed_status} adt_event={adt_event} sync_lag={sync_lag_seconds}s",
                 "stack_trace": (
-                    "Traceback (most recent call last):\n"
-                    '  File "scheduling/bed_manager.py", line 234, in sync_bed_state\n'
-                    "    adt_state = self._fetch_adt_census(unit)\n"
-                    '  File "scheduling/bed_manager.py", line 212, in _fetch_adt_census\n'
-                    "    self._reconcile_state(local_state, adt_state)\n"
-                    '  File "scheduling/bed_manager.py", line 189, in _reconcile_state\n'
-                    '    raise BedManagementException(f"Bed {bed_id} state conflict: {local} vs ADT {adt}")\n'
-                    "BedManagementException: Bed {bed_id} in unit {nursing_unit} state conflict, sync lag {sync_lag_seconds}s"
+                    "=== BED BOARD STATUS — {nursing_unit} ===\n"
+                    "Sync Lag: {sync_lag_seconds}s | Last ADT Event: {adt_event}\n"
+                    "------------------------------------------------------------------------\n"
+                    "BED       | BED-BOARD  | ADT-STATE  | PATIENT     | CONFLICT\n"
+                    "------------------------------------------------------------------------\n"
+                    "{bed_id}   | {bed_status:10s} | {adt_event:10s} | {patient_id}  | YES\n"
+                    "A-102     | occupied   | occupied   | PT-443821   | NO\n"
+                    "B-205     | vacant     | vacant     | --          | NO\n"
+                    "C-310     | cleaning   | cleaning   | --          | NO\n"
+                    "------------------------------------------------------------------------\n"
+                    "SCHED-BED-MGMT-FAIL: Bed {bed_id} state mismatch detected\n"
+                    "Bed board shows '{bed_status}' but ADT event '{adt_event}' received {sync_lag_seconds}s ago\n"
+                    "Census accuracy degraded — patient placement at risk"
                 ),
             },
             9: {
                 "name": "Appointment Scheduling Conflict",
                 "subsystem": "scheduling",
                 "vehicle_section": "scheduler_core",
-                "error_type": "ScheduleConflictException",
+                "error_type": "SCHED-CONFLICT",
                 "sensor_type": "appointment_scheduler",
                 "affected_services": ["scheduling-api", "ehr-system"],
                 "cascade_services": ["billing-processor"],
                 "description": "Double-booking or resource conflict detected in appointment scheduling engine",
-                "error_message": "Schedule conflict: provider {provider_id} slot {time_slot} already booked, patient {patient_id} encounter {encounter_id} resource {resource_type}",
+                "error_message": "[SCHED] SCHED-CONFLICT: provider={provider_id} slot={time_slot} patient={patient_id} encounter={encounter_id} resource={resource_type}",
                 "stack_trace": (
-                    "Traceback (most recent call last):\n"
-                    '  File "scheduling/appointment_engine.py", line 189, in book_appointment\n'
-                    "    self._check_availability(provider_id, slot, resource)\n"
-                    '  File "scheduling/appointment_engine.py", line 167, in _check_availability\n'
-                    "    conflicts = self._find_conflicts(provider_id, slot)\n"
-                    '  File "scheduling/appointment_engine.py", line 145, in _find_conflicts\n'
-                    '    raise ScheduleConflictException(f"Slot {slot} already booked for provider {provider_id}")\n'
-                    "ScheduleConflictException: Provider {provider_id} slot {time_slot} conflict for patient {patient_id}"
+                    "=== SCHEDULING CONFLICT DETAIL ===\n"
+                    "Provider: {provider_id} | Slot: {time_slot} | Resource: {resource_type}\n"
+                    "------------------------------------------------------------------------\n"
+                    "EXISTING BOOKING:\n"
+                    "  Patient: PT-EXISTING | Encounter: ENC-887432 | Type: follow-up\n"
+                    "  Booked: {time_slot} | Duration: 30min | Resource: {resource_type}\n"
+                    "CONFLICTING REQUEST:\n"
+                    "  Patient: {patient_id} | Encounter: {encounter_id} | Type: new-patient\n"
+                    "  Requested: {time_slot} | Duration: 45min | Resource: {resource_type}\n"
+                    "------------------------------------------------------------------------\n"
+                    "SCHED-CONFLICT: Double-booking detected for provider {provider_id} at {time_slot}\n"
+                    "Resource {resource_type} unavailable — patient {patient_id} requires rescheduling"
                 ),
             },
             10: {
                 "name": "Insurance Eligibility Check Timeout",
                 "subsystem": "billing",
                 "vehicle_section": "eligibility_gateway",
-                "error_type": "EligibilityTimeoutException",
+                "error_type": "X12-271-TIMEOUT",
                 "sensor_type": "x12_270_271",
                 "affected_services": ["billing-processor", "scheduling-api"],
                 "cascade_services": ["ehr-system"],
                 "description": "Real-time insurance eligibility verification via X12 270/271 transaction times out",
-                "error_message": "Eligibility timeout: payer {payer_id} insurance {insurance_id} patient {patient_id} elapsed {elapsed_ms}ms exceeds {timeout_ms}ms",
+                "error_message": "[CLAIMS] X12-271-TIMEOUT: payer={payer_id} insurance={insurance_id} patient={patient_id} elapsed={elapsed_ms}ms timeout={timeout_ms}ms",
                 "stack_trace": (
-                    "Traceback (most recent call last):\n"
-                    '  File "billing/eligibility_checker.py", line 278, in verify_eligibility\n'
-                    "    response = self._send_x12_270(payer_endpoint, request)\n"
-                    '  File "billing/eligibility_checker.py", line 256, in _send_x12_270\n'
-                    "    self._check_response_timeout(elapsed, timeout)\n"
-                    '  File "billing/eligibility_checker.py", line 234, in _check_response_timeout\n'
-                    '    raise EligibilityTimeoutException(f"Payer {payer_id} timeout after {elapsed}ms")\n'
-                    "EligibilityTimeoutException: Payer {payer_id} eligibility check timeout after {elapsed_ms}ms"
+                    "--- X12 270/271 TRANSACTION TRACE ---\n"
+                    ">>> 270 Eligibility Inquiry\n"
+                    "ISA*00*          *00*          *ZZ*FACILITY-01    *ZZ*{payer_id}        *20260217143052*^*00501*000000001*0*P*:\n"
+                    "GS*HS*FACILITY-01*{payer_id}*20260217143052*0001*X*005010X279A1\n"
+                    "ST*270*0001*005010X279A1\n"
+                    "BHT*0022*13*{insurance_id}*20260217143052\n"
+                    "HL*1**20*1\n"
+                    "NM1*PR*2*{payer_id}*****PI*{payer_id}\n"
+                    "HL*2*1*21*1\n"
+                    "NM1*IL*1*DOE*JANE****MI*{insurance_id}\n"
+                    "SE*9*0001\n"
+                    "<<< 271 Response — TIMEOUT\n"
+                    "X12-271-TIMEOUT: No response from {payer_id} after {elapsed_ms}ms (limit: {timeout_ms}ms)\n"
+                    "Patient: {patient_id} | Insurance: {insurance_id} | Queued for retry"
                 ),
             },
             11: {
                 "name": "Claims Processing Batch Failure",
                 "subsystem": "billing",
                 "vehicle_section": "claims_engine",
-                "error_type": "ClaimsProcessException",
+                "error_type": "X12-837-REJECT",
                 "sensor_type": "x12_837",
                 "affected_services": ["billing-processor", "data-warehouse"],
                 "cascade_services": ["ehr-system", "scheduling-api"],
                 "description": "Batch claims processing pipeline fails during X12 837 generation or submission",
-                "error_message": "Claims batch failure: batch {batch_id} claim {claim_id} patient {patient_id} payer {payer_id} rejected at stage {claim_stage}",
+                "error_message": "[CLAIMS] X12-837-REJECT: batch={batch_id} claim={claim_id} patient={patient_id} payer={payer_id} stage={claim_stage}",
                 "stack_trace": (
-                    "Traceback (most recent call last):\n"
-                    '  File "billing/claims_processor.py", line 312, in process_batch\n'
-                    "    x12_output = self._generate_837(claims_batch)\n"
-                    '  File "billing/claims_processor.py", line 289, in _generate_837\n'
-                    "    self._validate_claim(claim)\n"
-                    '  File "billing/claims_processor.py", line 267, in _validate_claim\n'
-                    '    raise ClaimsProcessException(f"Claim {claim_id} rejected at {stage}")\n'
-                    "ClaimsProcessException: Batch {batch_id} claim {claim_id} rejected at stage {claim_stage}"
+                    "--- X12 837 CLAIM SUBMISSION TRACE ---\n"
+                    ">>> 837 Professional Claim\n"
+                    "ISA*00*          *00*          *ZZ*FACILITY-01    *ZZ*{payer_id}        *20260217143052*^*00501*000000001*0*P*:\n"
+                    "GS*HC*FACILITY-01*{payer_id}*20260217143052*0001*X*005010X222A1\n"
+                    "ST*837*0001*005010X222A1\n"
+                    "BHT*0019*00*{batch_id}*20260217143052*CH\n"
+                    "CLM*{claim_id}*5000***11:B:1*Y**A*Y*Y\n"
+                    "NM1*IL*1*DOE*JANE****MI*{insurance_id}\n"
+                    "SE*8*0001\n"
+                    "<<< 999 Acknowledgment\n"
+                    "  AK9*R*1*1*0\n"
+                    "  IK3*CLM*4*2300*8\n"
+                    "  IK4*2*782*7*{claim_stage}\n"
+                    "X12-837-REJECT: Claim {claim_id} in batch {batch_id} rejected at {claim_stage}\n"
+                    "Patient: {patient_id} | Payer: {payer_id} | Queued for correction"
                 ),
             },
             12: {
                 "name": "PACS Storage Capacity Warning",
                 "subsystem": "radiology",
                 "vehicle_section": "pacs_storage",
-                "error_type": "PACSCapacityException",
+                "error_type": "PACS-CAPACITY-CRITICAL",
                 "sensor_type": "storage_monitor",
                 "affected_services": ["imaging-service", "data-warehouse"],
                 "cascade_services": ["clinical-alerts", "ehr-system"],
                 "description": "PACS archive storage capacity approaching critical threshold, risking image loss",
-                "error_message": "PACS capacity warning: volume {volume_id} usage {usage_pct}% exceeds {threshold_pct}% threshold, {remaining_gb}GB remaining",
+                "error_message": "[PACS] PACS-CAPACITY-CRITICAL: volume={volume_id} usage={usage_pct}% threshold={threshold_pct}% remaining={remaining_gb}GB",
                 "stack_trace": (
-                    "Traceback (most recent call last):\n"
-                    '  File "radiology/pacs_monitor.py", line 198, in check_storage\n'
-                    "    usage = self._compute_volume_usage(volume_id)\n"
-                    '  File "radiology/pacs_monitor.py", line 176, in _compute_volume_usage\n'
-                    "    self._check_capacity_threshold(volume_id, usage)\n"
-                    '  File "radiology/pacs_monitor.py", line 154, in _check_capacity_threshold\n'
-                    '    raise PACSCapacityException(f"Volume {volume_id} at {usage}% capacity")\n'
-                    "PACSCapacityException: Volume {volume_id} at {usage_pct}%, {remaining_gb}GB remaining"
+                    "=== PACS STORAGE VOLUME REPORT ===\n"
+                    "------------------------------------------------------------------------\n"
+                    "VOLUME          | TOTAL TB | USED TB | FREE GB | USAGE% | STATUS\n"
+                    "------------------------------------------------------------------------\n"
+                    "{volume_id:15s} | 50.0     | {usage_pct}%  | {remaining_gb}    | {usage_pct}%  | CRITICAL\n"
+                    "PACS-VOL-02     | 50.0     | 72.3%   | 13850   | 72.3%  | OK\n"
+                    "PACS-ARCHIVE-01 | 200.0    | 65.1%   | 69800   | 65.1%  | OK\n"
+                    "------------------------------------------------------------------------\n"
+                    "PACS-CAPACITY-CRITICAL: {volume_id} at {usage_pct}% (threshold: {threshold_pct}%)\n"
+                    "Remaining: {remaining_gb}GB — estimated time to full: <48 hours\n"
+                    "Action required: archive migration or volume expansion"
                 ),
             },
             13: {
                 "name": "Clinical Decision Support Overload",
                 "subsystem": "alerting",
                 "vehicle_section": "cds_engine",
-                "error_type": "CDSOverloadException",
+                "error_type": "CDS-OVERLOAD",
                 "sensor_type": "cds_rule_engine",
                 "affected_services": ["clinical-alerts", "ehr-system"],
                 "cascade_services": ["pharmacy-system", "patient-monitor"],
                 "description": "Clinical decision support rule engine overloaded, unable to evaluate rules within SLA",
-                "error_message": "CDS overload: {pending_rules} rules pending, evaluation time {eval_ms}ms exceeds {max_eval_ms}ms SLA for patient {patient_id}",
+                "error_message": "[CDS] CDS-OVERLOAD: rules_queued={pending_rules} eval_ms={eval_ms} threshold={max_eval_ms}ms patient={patient_id}",
                 "stack_trace": (
-                    "Traceback (most recent call last):\n"
-                    '  File "alerting/cds_engine.py", line 267, in evaluate_rules\n'
-                    "    results = self._run_rule_set(patient_context, rules)\n"
-                    '  File "alerting/cds_engine.py", line 245, in _run_rule_set\n'
-                    "    self._check_sla(elapsed, max_eval)\n"
-                    '  File "alerting/cds_engine.py", line 223, in _check_sla\n'
-                    '    raise CDSOverloadException(f"Rule evaluation {elapsed}ms exceeds {max_eval}ms SLA")\n'
-                    "CDSOverloadException: {pending_rules} rules pending, evaluation {eval_ms}ms exceeds {max_eval_ms}ms SLA"
+                    "=== CDS RULE ENGINE STATUS ===\n"
+                    "Patient Context: {patient_id}\n"
+                    "Evaluation Time: {eval_ms}ms | SLA Threshold: {max_eval_ms}ms | STATUS: BREACHED\n"
+                    "------------------------------------------------------------------------\n"
+                    "RULE SET            | RULES | STATUS    | EVAL MS | RESULT\n"
+                    "------------------------------------------------------------------------\n"
+                    "Sepsis Screening    | 12    | TIMEOUT   | {eval_ms}   | INCOMPLETE\n"
+                    "Drug Interaction    | 8     | QUEUED    | --      | PENDING\n"
+                    "Fall Risk           | 5     | QUEUED    | --      | PENDING\n"
+                    "VTE Prophylaxis     | 6     | QUEUED    | --      | PENDING\n"
+                    "------------------------------------------------------------------------\n"
+                    "Total Pending: {pending_rules} rules | Queue Depth: SATURATED\n"
+                    "CDS-OVERLOAD: Evaluation backlog — {pending_rules} rules queued, {eval_ms}ms exceeds {max_eval_ms}ms SLA\n"
+                    "Clinical alerts for {patient_id} delayed — escalation required"
                 ),
             },
             14: {
                 "name": "Nurse Call System Integration Failure",
                 "subsystem": "alerting",
                 "vehicle_section": "nurse_call_bridge",
-                "error_type": "NurseCallException",
+                "error_type": "NURSE-CALL-STORM",
                 "sensor_type": "nurse_call_interface",
                 "affected_services": ["clinical-alerts", "patient-monitor"],
                 "cascade_services": ["ehr-system"],
                 "description": "Integration bridge between nurse call system and EHR loses connectivity",
-                "error_message": "Nurse call integration failure: station {station_id} unit {nursing_unit} bed {bed_id} call type {call_type} undelivered for {undelivered_seconds}s",
+                "error_message": "[CDS] NURSE-CALL-STORM: station={station_id} unit={nursing_unit} bed={bed_id} call_type={call_type} undelivered={undelivered_seconds}s",
                 "stack_trace": (
-                    "Traceback (most recent call last):\n"
-                    '  File "alerting/nurse_call_bridge.py", line 189, in relay_call\n'
-                    "    self._send_to_ehr(call_event, ehr_endpoint)\n"
-                    '  File "alerting/nurse_call_bridge.py", line 167, in _send_to_ehr\n'
-                    "    self._check_delivery_timeout(call_id, elapsed)\n"
-                    '  File "alerting/nurse_call_bridge.py", line 145, in _check_delivery_timeout\n'
-                    '    raise NurseCallException(f"Call {call_id} undelivered for {elapsed}s")\n'
-                    "NurseCallException: Station {station_id} call undelivered for {undelivered_seconds}s on unit {nursing_unit}"
+                    "=== NURSE CALL SYSTEM STATUS — {nursing_unit} ===\n"
+                    "Station: {station_id} | Bridge: EHR-NCS-BRIDGE-01 | Status: DEGRADED\n"
+                    "------------------------------------------------------------------------\n"
+                    "BED       | CALL TYPE       | INITIATED   | DELIVERED | WAIT (s)\n"
+                    "------------------------------------------------------------------------\n"
+                    "{bed_id}   | {call_type:15s} | 20260217143052 | PENDING   | {undelivered_seconds}\n"
+                    "B-208     | routine         | 20260217143052 | PENDING   | 45\n"
+                    "C-312     | bathroom        | 20260217143052 | YES       | 0\n"
+                    "------------------------------------------------------------------------\n"
+                    "NURSE-CALL-STORM: {station_id} — {call_type} call from bed {bed_id} undelivered for {undelivered_seconds}s\n"
+                    "EHR bridge connectivity degraded on {nursing_unit}\n"
+                    "Failover to overhead paging initiated"
                 ),
             },
             15: {
                 "name": "Blood Bank Inventory Sync Error",
                 "subsystem": "laboratory",
                 "vehicle_section": "blood_bank_interface",
-                "error_type": "BloodBankSyncException",
+                "error_type": "BB-INVENTORY-SYNC",
                 "sensor_type": "blood_bank_inventory",
                 "affected_services": ["lab-integration", "clinical-alerts"],
                 "cascade_services": ["ehr-system", "scheduling-api"],
                 "description": "Blood bank inventory management system loses sync with transfusion service records",
-                "error_message": "Blood bank sync error: product {blood_product} type {blood_type} units on-hand {units_on_hand} vs system count {system_count} — discrepancy {discrepancy}",
+                "error_message": "[LIS] BB-INVENTORY-SYNC: product={blood_product} type={blood_type} on_hand={units_on_hand} system={system_count} discrepancy={discrepancy}",
                 "stack_trace": (
-                    "Traceback (most recent call last):\n"
-                    '  File "laboratory/blood_bank_sync.py", line 223, in reconcile_inventory\n'
-                    "    physical = self._count_physical_units(product_type)\n"
-                    '  File "laboratory/blood_bank_sync.py", line 201, in _count_physical_units\n'
-                    "    self._check_discrepancy(physical, system_count)\n"
-                    '  File "laboratory/blood_bank_sync.py", line 178, in _check_discrepancy\n'
-                    '    raise BloodBankSyncException(f"Inventory discrepancy: {physical} vs {system}")\n'
-                    "BloodBankSyncException: {blood_product} {blood_type} discrepancy: {units_on_hand} physical vs {system_count} system"
+                    "=== BLOOD BANK INVENTORY RECONCILIATION ===\n"
+                    "Reconciliation Time: 20260217143052\n"
+                    "------------------------------------------------------------------------\n"
+                    "PRODUCT         | TYPE | PHYSICAL | SYSTEM | DISCREPANCY | STATUS\n"
+                    "------------------------------------------------------------------------\n"
+                    "{blood_product:15s} | {blood_type:4s} | {units_on_hand:8d} | {system_count:6d} | {discrepancy:11d} | MISMATCH\n"
+                    "PRBC            | O-   | 12       | 12     | 0           | OK\n"
+                    "FFP             | AB+  | 8        | 8      | 0           | OK\n"
+                    "Platelets       | O+   | 6        | 6      | 0           | OK\n"
+                    "------------------------------------------------------------------------\n"
+                    "BB-INVENTORY-SYNC: {blood_product} {blood_type} — physical count {units_on_hand} vs system {system_count}\n"
+                    "Discrepancy of {discrepancy} units detected — transfusion service notified\n"
+                    "Manual physical recount required per blood bank SOP"
                 ),
             },
             16: {
                 "name": "Surgical Schedule Conflict",
                 "subsystem": "scheduling",
                 "vehicle_section": "or_scheduler",
-                "error_type": "SurgicalConflictException",
+                "error_type": "SCHED-SURGICAL-CONFLICT",
                 "sensor_type": "surgical_scheduler",
                 "affected_services": ["scheduling-api", "ehr-system"],
                 "cascade_services": ["billing-processor", "clinical-alerts"],
                 "description": "Operating room scheduling conflict detected between overlapping surgical cases",
-                "error_message": "Surgical conflict: OR {or_number} case {case_id} surgeon {surgeon_id} overlaps with existing case at {conflict_time} — patient {patient_id}",
+                "error_message": "[SCHED] SCHED-SURGICAL-CONFLICT: or={or_number} case={case_id} surgeon={surgeon_id} conflict_time={conflict_time} patient={patient_id}",
                 "stack_trace": (
-                    "Traceback (most recent call last):\n"
-                    '  File "scheduling/surgical_scheduler.py", line 312, in book_case\n'
-                    "    self._check_or_availability(or_number, start_time, duration)\n"
-                    '  File "scheduling/surgical_scheduler.py", line 289, in _check_or_availability\n'
-                    "    conflicts = self._find_overlaps(or_number, time_window)\n"
-                    '  File "scheduling/surgical_scheduler.py", line 267, in _find_overlaps\n'
-                    '    raise SurgicalConflictException(f"OR {or_number} conflict at {conflict_time}")\n'
-                    "SurgicalConflictException: OR {or_number} case {case_id} conflicts at {conflict_time}"
+                    "=== OR SCHEDULE BLOCK — {or_number} ===\n"
+                    "------------------------------------------------------------------------\n"
+                    "TIME      | CASE       | SURGEON         | PATIENT     | STATUS\n"
+                    "------------------------------------------------------------------------\n"
+                    "07:00     | SURG-44821 | NPI-1234567890  | PT-332145   | COMPLETED\n"
+                    "09:30     | SURG-44822 | NPI-9876543210  | PT-445678   | IN-PROGRESS\n"
+                    "{conflict_time}     | {case_id} | {surgeon_id} | {patient_id}  | CONFLICT\n"
+                    "{conflict_time}     | SURG-EXIST | NPI-EXISTING   | PT-EXISTING | BOOKED\n"
+                    "------------------------------------------------------------------------\n"
+                    "SCHED-SURGICAL-CONFLICT: {or_number} at {conflict_time} — double-booked\n"
+                    "Case {case_id} for surgeon {surgeon_id} overlaps with existing booking\n"
+                    "Patient {patient_id} requires OR reassignment or time shift"
                 ),
             },
             17: {
                 "name": "ADT Feed Synchronization Gap",
                 "subsystem": "clinical_records",
                 "vehicle_section": "adt_interface",
-                "error_type": "ADTSyncException",
+                "error_type": "ADT-SYNC-FAIL",
                 "sensor_type": "adt_feed",
                 "affected_services": ["ehr-system", "scheduling-api"],
                 "cascade_services": ["patient-monitor", "billing-processor", "lab-integration"],
                 "description": "ADT (Admit-Discharge-Transfer) event feed falls behind, causing stale patient location data",
-                "error_message": "ADT sync gap: feed {feed_id} last event {gap_seconds}s ago, queue depth {queue_depth}, patient {patient_id} event {adt_event_type} pending",
+                "error_message": "[EHR] ADT-SYNC-FAIL: feed={feed_id} lag={gap_seconds}s queue_depth={queue_depth} patient={patient_id} event={adt_event_type}",
                 "stack_trace": (
-                    "Traceback (most recent call last):\n"
-                    '  File "clinical/adt_processor.py", line 334, in process_feed\n'
-                    "    lag = self._measure_feed_lag(feed_id)\n"
-                    '  File "clinical/adt_processor.py", line 312, in _measure_feed_lag\n'
-                    "    self._check_sync_threshold(feed_id, lag)\n"
-                    '  File "clinical/adt_processor.py", line 289, in _check_sync_threshold\n'
-                    '    raise ADTSyncException(f"Feed {feed_id} lag {lag}s exceeds threshold")\n'
-                    "ADTSyncException: Feed {feed_id} sync gap {gap_seconds}s, queue depth {queue_depth}"
+                    "=== ADT FEED STATUS — {feed_id} ===\n"
+                    "Feed Lag: {gap_seconds}s | Queue Depth: {queue_depth} | Threshold: 30s\n"
+                    "------------------------------------------------------------------------\n"
+                    "SEQ    | EVENT | PATIENT     | TIMESTAMP   | STATUS\n"
+                    "------------------------------------------------------------------------\n"
+                    "001247 | {adt_event_type}    | {patient_id}  | 20260217143052 | QUEUED\n"
+                    "001246 | A08   | PT-887432   | 20260217143052 | QUEUED\n"
+                    "001245 | A03   | PT-556201   | 20260217143052 | QUEUED\n"
+                    "001244 | A01   | PT-334789   | 20260217143052 | DELIVERED\n"
+                    "------------------------------------------------------------------------\n"
+                    "ADT-SYNC-FAIL: {feed_id} lagging {gap_seconds}s with {queue_depth} events queued\n"
+                    "Patient {patient_id} event {adt_event_type} pending delivery\n"
+                    "Downstream systems receiving stale location data"
                 ),
             },
             18: {
                 "name": "Data Warehouse ETL Pipeline Stall",
                 "subsystem": "analytics",
                 "vehicle_section": "etl_pipeline",
-                "error_type": "ETLPipelineException",
+                "error_type": "ETL-PIPELINE-STALL",
                 "sensor_type": "etl_monitor",
                 "affected_services": ["data-warehouse", "billing-processor"],
                 "cascade_services": ["ehr-system"],
                 "description": "Clinical data warehouse ETL pipeline stalls during extraction or transformation phase",
-                "error_message": "ETL pipeline stall: pipeline {pipeline_id} stage {etl_stage} rows processed {rows_processed}/{total_rows} stalled for {stall_seconds}s",
+                "error_message": "[DW] ETL-PIPELINE-STALL: pipeline={pipeline_id} stage={etl_stage} rows={rows_processed}/{total_rows} stalled={stall_seconds}s",
                 "stack_trace": (
-                    "Traceback (most recent call last):\n"
-                    '  File "analytics/etl_manager.py", line 278, in run_pipeline\n'
-                    "    self._execute_stage(pipeline_id, stage)\n"
-                    '  File "analytics/etl_manager.py", line 256, in _execute_stage\n'
-                    "    self._check_progress(pipeline_id, stage, elapsed)\n"
-                    '  File "analytics/etl_manager.py", line 234, in _check_progress\n'
-                    '    raise ETLPipelineException(f"Pipeline {pipeline_id} stalled at {stage}")\n'
-                    "ETLPipelineException: Pipeline {pipeline_id} stalled at {etl_stage}, {rows_processed}/{total_rows} rows"
+                    "=== ETL PIPELINE STATUS REPORT ===\n"
+                    "------------------------------------------------------------------------\n"
+                    "PIPELINE        | STAGE     | ROWS DONE   | TOTAL ROWS  | STALL(s) | STATUS\n"
+                    "------------------------------------------------------------------------\n"
+                    "{pipeline_id} | {etl_stage:9s} | {rows_processed:11d} | {total_rows:11d} | {stall_seconds:8d} | STALLED\n"
+                    "ETL-BILLING-02  | load      | 1200000     | 1200000     | 0        | COMPLETE\n"
+                    "ETL-LAB-03      | transform | 450000      | 800000      | 0        | RUNNING\n"
+                    "ETL-QUALITY-04  | extract   | 0           | 500000      | 0        | QUEUED\n"
+                    "------------------------------------------------------------------------\n"
+                    "ETL-PIPELINE-STALL: {pipeline_id} stalled at {etl_stage} for {stall_seconds}s\n"
+                    "Progress: {rows_processed}/{total_rows} rows — no advancement detected\n"
+                    "Source connection pool may be exhausted — DBA review recommended"
                 ),
             },
             19: {
                 "name": "HIPAA Audit Log Integrity Error",
                 "subsystem": "analytics",
                 "vehicle_section": "audit_subsystem",
-                "error_type": "HIPAAAuditException",
+                "error_type": "HIPAA-AUDIT-FAIL",
                 "sensor_type": "audit_log_integrity",
                 "affected_services": ["data-warehouse", "ehr-system"],
                 "cascade_services": ["clinical-alerts", "billing-processor"],
                 "description": "HIPAA-mandated audit log chain integrity check fails, indicating possible tampering or data loss",
-                "error_message": "HIPAA audit integrity error: log chain {chain_id} hash mismatch at sequence {sequence_number}, expected {expected_hash} got {actual_hash}",
+                "error_message": "[DW] HIPAA-AUDIT-FAIL: chain={chain_id} sequence={sequence_number} expected_hash={expected_hash} actual_hash={actual_hash}",
                 "stack_trace": (
-                    "Traceback (most recent call last):\n"
-                    '  File "analytics/audit_verifier.py", line 198, in verify_chain\n'
-                    "    computed = self._compute_chain_hash(chain_id, sequence)\n"
-                    '  File "analytics/audit_verifier.py", line 176, in _compute_chain_hash\n'
-                    "    self._compare_hashes(computed, stored)\n"
-                    '  File "analytics/audit_verifier.py", line 154, in _compare_hashes\n'
-                    '    raise HIPAAAuditException(f"Hash mismatch at sequence {sequence}")\n'
-                    "HIPAAAuditException: Chain {chain_id} integrity failure at sequence {sequence_number}"
+                    "=== HIPAA AUDIT CHAIN INTEGRITY REPORT ===\n"
+                    "Chain: {chain_id} | Algorithm: SHA-256 | Verification: FAILED\n"
+                    "------------------------------------------------------------------------\n"
+                    "SEQUENCE   | TIMESTAMP   | ACTION       | EXPECTED HASH        | STATUS\n"
+                    "------------------------------------------------------------------------\n"
+                    "{sequence_number:10d} | 20260217143052 | PHI_ACCESS   | {expected_hash} | MISMATCH\n"
+                    "  Stored:   {actual_hash}\n"
+                    "  Expected: {expected_hash}\n"
+                    "------------------------------------------------------------------------\n"
+                    "Previous 3 entries: VALID\n"
+                    "Next entry: CANNOT VERIFY (chain broken)\n"
+                    "------------------------------------------------------------------------\n"
+                    "HIPAA-AUDIT-FAIL: Chain {chain_id} integrity broken at sequence {sequence_number}\n"
+                    "Hash mismatch indicates possible record tampering or data corruption\n"
+                    "Compliance officer notification triggered — investigation required per 45 CFR 164.312(b)"
                 ),
             },
             20: {
                 "name": "Telehealth Session Quality Degradation",
                 "subsystem": "vital_signs",
                 "vehicle_section": "telehealth_engine",
-                "error_type": "TelehealthQualityException",
+                "error_type": "TELEHEALTH-QOS-DEGRAD",
                 "sensor_type": "telehealth_qos",
                 "affected_services": ["patient-monitor", "clinical-alerts"],
                 "cascade_services": ["ehr-system", "scheduling-api"],
                 "description": "Telehealth video session quality degrades below clinical acceptability threshold",
-                "error_message": "Telehealth quality degradation: session {session_id} patient {patient_id} bitrate {bitrate_kbps}kbps packet loss {packet_loss_pct}% latency {latency_ms}ms",
+                "error_message": "[MONITOR] TELEHEALTH-QOS-DEGRAD: session={session_id} patient={patient_id} bitrate={bitrate_kbps}kbps loss={packet_loss_pct}% latency={latency_ms}ms",
                 "stack_trace": (
-                    "Traceback (most recent call last):\n"
-                    '  File "vitals/telehealth_monitor.py", line 234, in check_session_quality\n'
-                    "    metrics = self._collect_qos_metrics(session_id)\n"
-                    '  File "vitals/telehealth_monitor.py", line 212, in _collect_qos_metrics\n'
-                    "    self._evaluate_clinical_threshold(metrics)\n"
-                    '  File "vitals/telehealth_monitor.py", line 189, in _evaluate_clinical_threshold\n'
-                    '    raise TelehealthQualityException(f"Session {session_id} below clinical threshold")\n'
-                    "TelehealthQualityException: Session {session_id} quality degraded: {bitrate_kbps}kbps, {packet_loss_pct}% loss, {latency_ms}ms latency"
+                    "=== WEBRTC QUALITY METRICS — SESSION {session_id} ===\n"
+                    "Patient: {patient_id} | Provider: NPI-ATTENDING\n"
+                    "------------------------------------------------------------------------\n"
+                    "METRIC              | VALUE          | THRESHOLD     | STATUS\n"
+                    "------------------------------------------------------------------------\n"
+                    "Video Bitrate       | {bitrate_kbps} kbps    | >750 kbps     | DEGRADED\n"
+                    "Packet Loss         | {packet_loss_pct}%         | <2.0%         | CRITICAL\n"
+                    "Round-Trip Latency  | {latency_ms} ms       | <300 ms       | DEGRADED\n"
+                    "Jitter              | 45 ms          | <30 ms        | WARNING\n"
+                    "Frame Rate          | 12 fps         | >24 fps       | DEGRADED\n"
+                    "Audio MOS           | 2.8            | >3.5          | WARNING\n"
+                    "------------------------------------------------------------------------\n"
+                    "TELEHEALTH-QOS-DEGRAD: Session {session_id} below clinical acceptability\n"
+                    "Video quality insufficient for remote physical examination\n"
+                    "Recommendation: Switch to audio-only or reschedule in-person visit"
                 ),
             },
         }
@@ -790,13 +885,24 @@ class HealthcareScenario(BaseScenario):
                 "You are the Clinical Systems Analyst, an expert AI assistant for "
                 "hospital clinical operations. You help IT operations teams investigate "
                 "system anomalies, analyze integration failures, and provide root cause "
-                "analysis for fault conditions across 9 clinical systems including EHR, "
-                "patient monitoring, laboratory, pharmacy, imaging (DICOM/PACS), "
-                "scheduling, billing (X12), clinical alerting, and data warehouse. "
-                "You are well-versed in HL7 v2.x messaging, DICOM protocols, HIPAA "
-                "compliance requirements, NCPDP SCRIPT e-prescribing, X12 270/271 "
-                "eligibility and 837 claims transactions, ADT workflows, and clinical "
-                "decision support systems."
+                "analysis for fault conditions across 9 clinical systems spanning "
+                "AWS, GCP, and Azure. "
+                "You have deep expertise in HL7 v2.x ADT/ORM/ORU messaging, DICOM "
+                "C-STORE/C-MOVE/C-FIND protocols, NCPDP SCRIPT e-prescribing, X12 "
+                "270/271 eligibility and 837 claims transactions, ASTM laboratory "
+                "interfaces, clinical decision support (CDS) rule engines, HIPAA "
+                "audit compliance, and healthcare ETL pipelines. "
+                "When investigating incidents, search for these system identifiers in logs: "
+                "EHR faults (HL7-ACK-AE, EMPI-MATCH-FAIL, ADT-SYNC-FAIL), "
+                "Vital Signs faults (VITAL-ALERT-STORM, TELEHEALTH-QOS-DEGRAD), "
+                "Laboratory faults (LIS-RESULT-DELAY, BB-INVENTORY-SYNC), "
+                "Radiology faults (DICOM-STORE-FAIL, PACS-CAPACITY-CRITICAL), "
+                "Medication faults (CPOE-DDI-CRITICAL, NCPDP-SCRIPT-FAIL), "
+                "Scheduling faults (SCHED-BED-MGMT-FAIL, SCHED-CONFLICT, SCHED-SURGICAL-CONFLICT), "
+                "Billing faults (X12-271-TIMEOUT, X12-837-REJECT), "
+                "Alerting faults (CDS-OVERLOAD, NURSE-CALL-STORM), "
+                "and Analytics faults (ETL-PIPELINE-STALL, HIPAA-AUDIT-FAIL). "
+                "Log messages are in body.text — NEVER search the body field alone."
             ),
         }
 

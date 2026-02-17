@@ -48,7 +48,7 @@ class EHRSystemService(BaseService):
         enc_type = random.choice(["inpatient", "outpatient", "emergency", "observation"])
         self.emit_log(
             "INFO",
-            f"Encounter opened: {enc_type} for {mrn} in {dept} — chart initialized",
+            f"[EHR] encounter_open type={enc_type} mrn={mrn} dept={dept} status=ACTIVE",
             {
                 "operation": "encounter_open",
                 "encounter.type": enc_type,
@@ -65,7 +65,7 @@ class EHRSystemService(BaseService):
         latency_ms = random.randint(15, 120)
         self.emit_log(
             "INFO",
-            f"Chart {action}: {doc_type} by provider {provider} — {latency_ms}ms",
+            f"[EHR] chart_access action={action} doc_type={doc_type} provider={provider} latency={latency_ms}ms status=OK",
             {
                 "operation": "chart_access",
                 "chart.action": action,
@@ -79,7 +79,7 @@ class EHRSystemService(BaseService):
         total_patients = random.randint(180, 350)
         self.emit_log(
             "INFO",
-            f"Census snapshot: {total_patients} active patients across {len(self._departments)} departments — system nominal",
+            f"[EHR] census_snapshot patients={total_patients} departments={len(self._departments)} adt_sync=CURRENT status=NOMINAL",
             {
                 "operation": "census_snapshot",
                 "census.total_patients": total_patients,

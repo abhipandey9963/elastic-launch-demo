@@ -43,7 +43,7 @@ class SensorValidatorService(BaseService):
             epoch = int(time.time()) - random.randint(0, 3600)
             self.emit_log(
                 "INFO",
-                f"Validation PASS: {sensor_type} sensor within calibration baseline (confidence {confidence})",
+                f"[VV] validate sensor={sensor_type} epoch={epoch} confidence={confidence} result=PASS status=NOMINAL",
                 {
                     "validation.result": "PASS",
                     "validation.sensor_type": sensor_type,
@@ -61,7 +61,7 @@ class SensorValidatorService(BaseService):
 
         self.emit_log(
             "INFO",
-            f"Validation pipeline healthy: {validations_per_sec}/s, queue depth {queue_depth}",
+            f"[VV] pipeline_status rate={validations_per_sec}/s queue_depth={queue_depth} status=NOMINAL",
             {
                 "operation": "pipeline_health",
                 "validation.rate": validations_per_sec,

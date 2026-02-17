@@ -122,382 +122,492 @@ class SpaceScenario(BaseScenario):
                 "name": "Thermal Calibration Drift",
                 "subsystem": "propulsion",
                 "vehicle_section": "engine_bay",
-                "error_type": "ThermalCalibrationException",
+                "error_type": "TCS-DRIFT-CRITICAL",
                 "sensor_type": "thermal",
                 "affected_services": ["fuel-system", "sensor-validator"],
                 "cascade_services": ["mission-control", "range-safety"],
                 "description": "Thermal sensor calibration drifts outside acceptable bounds in the engine bay",
-                "error_message": "Thermal sensor calibration drift detected: deviation {deviation}K exceeds threshold of 2.5K at epoch {epoch}",
+                "error_message": "[TCS] TCS-DRIFT-CRITICAL: sensor=TC-47 reading={deviation}K nominal=310.2K deviation=+{deviation}K epoch={epoch}",
                 "stack_trace": (
-                    "Traceback (most recent call last):\n"
-                    '  File "propulsion/thermal_monitor.py", line 342, in validate_calibration\n'
-                    "    baseline = self._load_calibration_baseline(sensor_id, epoch)\n"
-                    '  File "propulsion/thermal_monitor.py", line 298, in _load_calibration_baseline\n'
-                    "    return self.calibration_store.get(sensor_id)\n"
-                    '  File "propulsion/calibration_store.py", line 156, in get\n'
-                    '    raise ThermalCalibrationException(f"Calibration drift: {deviation}K > 2.5K threshold")\n'
-                    "ThermalCalibrationException: Calibration drift: {deviation}K > 2.5K threshold"
+                    "== TELEMETRY FRAME DUMP == TCS THERMAL CONTROL SUBSYSTEM ==\n"
+                    "TIMESTAMP: MET+00:04:12.337 | FRAME: 0x4A2F | SEQ: 18442\n"
+                    "---------------------------------------------------------------\n"
+                    "SENSOR    READING    NOMINAL    DELTA     STATUS\n"
+                    "TC-47     {deviation}K     310.2K     +{deviation}K   **CRITICAL**\n"
+                    "TC-48     311.4K     310.2K     +1.2K     NOMINAL\n"
+                    "TC-49     309.8K     310.2K     -0.4K     NOMINAL\n"
+                    "TC-50     310.0K     310.2K     -0.2K     NOMINAL\n"
+                    "---------------------------------------------------------------\n"
+                    "CALIBRATION BASELINE: epoch={epoch} | DRIFT THRESHOLD: 2.5K\n"
+                    "TCS-DRIFT-CRITICAL: Sensor TC-47 exceeded drift threshold by +{deviation}K\n"
+                    "ACTION: Recalibration required before engine ignition sequence"
                 ),
             },
             2: {
                 "name": "Fuel Pressure Anomaly",
                 "subsystem": "propulsion",
                 "vehicle_section": "fuel_tanks",
-                "error_type": "FuelPressureException",
+                "error_type": "PMS-PRESS-ANOMALY",
                 "sensor_type": "pressure",
                 "affected_services": ["fuel-system", "sensor-validator"],
                 "cascade_services": ["mission-control", "range-safety"],
                 "description": "Fuel tank pressure readings outside nominal range",
-                "error_message": "Fuel pressure anomaly: tank {tank_id} reading {pressure} PSI, expected {expected_min}-{expected_max} PSI",
+                "error_message": "[PMS] PMS-PRESS-ANOMALY: tank={tank_id} pressure={pressure}PSI nominal={expected_min}-{expected_max}PSI status=OUT_OF_BOUNDS",
                 "stack_trace": (
-                    "Traceback (most recent call last):\n"
-                    '  File "propulsion/fuel_controller.py", line 218, in monitor_pressure\n'
-                    "    self._validate_pressure_bounds(tank_id, reading)\n"
-                    '  File "propulsion/fuel_controller.py", line 195, in _validate_pressure_bounds\n'
-                    '    raise FuelPressureException(f"Pressure {reading} PSI out of bounds")\n'
-                    "FuelPressureException: Pressure {pressure} PSI out of bounds for tank {tank_id}"
+                    "== TELEMETRY FRAME DUMP == PMS PROPULSION MGMT SYSTEM ==\n"
+                    "TIMESTAMP: MET+00:04:12.891 | FRAME: 0x4A30 | SEQ: 18443\n"
+                    "---------------------------------------------------------------\n"
+                    "TANK      PRESSURE   NOM_MIN    NOM_MAX    STATUS\n"
+                    "{tank_id}    {pressure}PSI   {expected_min}PSI     {expected_max}PSI     **ANOMALY**\n"
+                    "LOX-2     265.3PSI   200PSI     310PSI     NOMINAL\n"
+                    "RP1-1     248.7PSI   200PSI     310PSI     NOMINAL\n"
+                    "RP1-2     251.2PSI   200PSI     310PSI     NOMINAL\n"
+                    "---------------------------------------------------------------\n"
+                    "PRESSURIZATION SYSTEM: He supply=2840PSI | reg_outlet=42PSI\n"
+                    "PMS-PRESS-ANOMALY: Tank {tank_id} reading {pressure}PSI outside bounds\n"
+                    "ACTION: Verify pressurization regulator and check for leak indications"
                 ),
             },
             3: {
                 "name": "Oxidizer Flow Rate Deviation",
                 "subsystem": "propulsion",
                 "vehicle_section": "engine_bay",
-                "error_type": "OxidizerFlowException",
+                "error_type": "PMS-OXIDIZER-FLOW",
                 "sensor_type": "flow_rate",
                 "affected_services": ["fuel-system", "sensor-validator"],
                 "cascade_services": ["mission-control"],
                 "description": "Oxidizer flow rate deviates from commanded value",
-                "error_message": "Oxidizer flow rate deviation: measured {measured} kg/s vs commanded {commanded} kg/s (delta {delta}%)",
+                "error_message": "[PMS] PMS-OXIDIZER-FLOW: measured={measured}kg/s commanded={commanded}kg/s delta={delta}% tolerance=3.0%",
                 "stack_trace": (
-                    "Traceback (most recent call last):\n"
-                    '  File "propulsion/oxidizer_controller.py", line 167, in check_flow_rate\n'
-                    "    delta = abs(measured - commanded) / commanded * 100\n"
-                    '  File "propulsion/oxidizer_controller.py", line 173, in check_flow_rate\n'
-                    '    raise OxidizerFlowException(f"Flow deviation {delta:.1f}% exceeds 3% tolerance")\n'
-                    "OxidizerFlowException: Flow deviation {delta}% exceeds 3% tolerance"
+                    "== TELEMETRY FRAME DUMP == PMS OXIDIZER FLOW CONTROLLER ==\n"
+                    "TIMESTAMP: MET+00:04:13.112 | FRAME: 0x4A31 | SEQ: 18444\n"
+                    "---------------------------------------------------------------\n"
+                    "PARAMETER          VALUE      COMMANDED   DELTA\n"
+                    "LOX_FLOW_RATE      {measured}kg/s   {commanded}kg/s    {delta}%\n"
+                    "LOX_INLET_TEMP     -182.4C    -183.0C     +0.3%\n"
+                    "LOX_INLET_PRESS    287.3PSI   290.0PSI    -0.9%\n"
+                    "TURBOPUMP_RPM      31420      31500       -0.3%\n"
+                    "---------------------------------------------------------------\n"
+                    "FLOW TOLERANCE: 3.0% | MEASURED DELTA: {delta}%\n"
+                    "PMS-OXIDIZER-FLOW: Flow deviation exceeds tolerance band\n"
+                    "ACTION: Check turbopump inlet conditions and valve position feedback"
                 ),
             },
             4: {
                 "name": "GPS Multipath Interference",
                 "subsystem": "guidance",
                 "vehicle_section": "avionics",
-                "error_type": "GPSMultipathException",
+                "error_type": "GNC-GPS-MULTIPATH",
                 "sensor_type": "gps",
                 "affected_services": ["navigation", "sensor-validator"],
                 "cascade_services": ["mission-control", "range-safety"],
                 "description": "GPS receiver detecting multipath signal interference",
-                "error_message": "GPS multipath interference detected: {num_satellites} satellites affected, position uncertainty {uncertainty}m",
+                "error_message": "[GNC] GNC-GPS-MULTIPATH: sv_count={num_satellites} pdop=8.7 threshold=6.0 uncertainty={uncertainty}m",
                 "stack_trace": (
-                    "Traceback (most recent call last):\n"
-                    '  File "guidance/gps_receiver.py", line 445, in process_fix\n'
-                    "    solution = self._compute_position(observations)\n"
-                    '  File "guidance/gps_receiver.py", line 412, in _compute_position\n'
-                    '    raise GPSMultipathException(f"Multipath on {num_affected} SVs")\n'
-                    "GPSMultipathException: Multipath on {num_satellites} SVs, uncertainty {uncertainty}m"
+                    "== GN&C SYSTEM STATUS == GPS RECEIVER UNIT ==\n"
+                    "TIMESTAMP: MET+00:04:14.005 | FRAME: 0x4A32 | SEQ: 18445\n"
+                    "---------------------------------------------------------------\n"
+                    "SV_ID   EL    AZ     SNR    MULTIPATH   USED\n"
+                    "G04     45    127    42.1   YES         NO\n"
+                    "G07     62    203    38.7   YES         NO\n"
+                    "G09     28    315    44.2   NO          YES\n"
+                    "G12     71    089    46.0   NO          YES\n"
+                    "G15     33    241    31.4   YES         NO\n"
+                    "---------------------------------------------------------------\n"
+                    "AFFECTED SVs: {num_satellites} | PDOP: 8.7 (threshold 6.0)\n"
+                    "POSITION UNCERTAINTY: {uncertainty}m | SOLUTION: DEGRADED\n"
+                    "GNC-GPS-MULTIPATH: Multipath interference degrading navigation solution\n"
+                    "ACTION: Switch to IMU-primary navigation mode"
                 ),
             },
             5: {
                 "name": "IMU Synchronization Loss",
                 "subsystem": "guidance",
                 "vehicle_section": "avionics",
-                "error_type": "IMUSyncException",
+                "error_type": "GNC-IMU-SYNC-LOSS",
                 "sensor_type": "imu",
                 "affected_services": ["navigation", "sensor-validator"],
                 "cascade_services": ["mission-control", "range-safety"],
                 "description": "Inertial measurement unit loses time synchronization",
-                "error_message": "IMU sync loss: drift {drift_ms}ms exceeds {threshold_ms}ms threshold on axis {axis}",
+                "error_message": "[GNC] GNC-IMU-SYNC-LOSS: axis={axis} drift={drift_ms}ms threshold={threshold_ms}ms sync_state=LOST",
                 "stack_trace": (
-                    "Traceback (most recent call last):\n"
-                    '  File "guidance/imu_controller.py", line 289, in sync_check\n'
-                    "    drift = self._measure_clock_drift(imu_id)\n"
-                    '  File "guidance/imu_controller.py", line 267, in _measure_clock_drift\n'
-                    '    raise IMUSyncException(f"Clock drift {drift}ms on {axis}-axis")\n'
-                    "IMUSyncException: Clock drift {drift_ms}ms on {axis}-axis exceeds threshold"
+                    "== GN&C SYSTEM STATUS == IMU SYNCHRONIZATION ==\n"
+                    "TIMESTAMP: MET+00:04:14.228 | FRAME: 0x4A33 | SEQ: 18446\n"
+                    "---------------------------------------------------------------\n"
+                    "AXIS    DRIFT_MS   THRESHOLD   GYRO_BIAS    STATUS\n"
+                    "{axis}       {drift_ms}ms    {threshold_ms}ms       +0.0021d/h   **SYNC_LOSS**\n"
+                    "Y       0.42ms     3.0ms       -0.0008d/h   NOMINAL\n"
+                    "Z       0.18ms     3.0ms       +0.0003d/h   NOMINAL\n"
+                    "---------------------------------------------------------------\n"
+                    "PPS_SOURCE: GPS_1PPS | CLOCK_REF: OCXO-A | TEMP: 42.1C\n"
+                    "GNC-IMU-SYNC-LOSS: {axis}-axis clock drift {drift_ms}ms exceeds threshold\n"
+                    "ACTION: Initiate IMU realignment sequence, verify PPS signal integrity"
                 ),
             },
             6: {
                 "name": "Star Tracker Alignment Fault",
                 "subsystem": "guidance",
                 "vehicle_section": "avionics",
-                "error_type": "StarTrackerAlignmentException",
+                "error_type": "GNC-STAR-TRACKER-ALIGN",
                 "sensor_type": "star_tracker",
                 "affected_services": ["navigation", "sensor-validator"],
                 "cascade_services": ["mission-control"],
                 "description": "Star tracker optical alignment exceeds tolerance",
-                "error_message": "Star tracker alignment fault: boresight error {error_arcsec} arcsec, limit {limit_arcsec} arcsec",
+                "error_message": "[GNC] GNC-STAR-TRACKER-ALIGN: boresight_error={error_arcsec}arcsec limit={limit_arcsec}arcsec catalog_match=DEGRADED",
                 "stack_trace": (
-                    "Traceback (most recent call last):\n"
-                    '  File "guidance/star_tracker.py", line 178, in validate_alignment\n'
-                    "    error = self._compute_boresight_error(catalog_stars, observed_stars)\n"
-                    '  File "guidance/star_tracker.py", line 156, in _compute_boresight_error\n'
-                    '    raise StarTrackerAlignmentException(f"Boresight error {error} arcsec")\n'
-                    "StarTrackerAlignmentException: Boresight error {error_arcsec} arcsec exceeds {limit_arcsec} limit"
+                    "== GN&C SYSTEM STATUS == STAR TRACKER ASSEMBLY ==\n"
+                    "TIMESTAMP: MET+00:04:14.501 | FRAME: 0x4A34 | SEQ: 18447\n"
+                    "---------------------------------------------------------------\n"
+                    "PARAMETER            VALUE        LIMIT      STATUS\n"
+                    "BORESIGHT_ERROR      {error_arcsec}arcsec   {limit_arcsec}arcsec  **FAULT**\n"
+                    "CATALOG_MATCHES      8/22         12 min     DEGRADED\n"
+                    "CCD_TEMP             -28.4C       -30.0C     NOMINAL\n"
+                    "INTEGRATION_TIME     250ms        500ms      NOMINAL\n"
+                    "---------------------------------------------------------------\n"
+                    "ATTITUDE_SOURCE: STAR_TRACKER_A | QUATERNION: [0.707, 0.0, 0.707, 0.0]\n"
+                    "GNC-STAR-TRACKER-ALIGN: Boresight error {error_arcsec} arcsec exceeds {limit_arcsec} limit\n"
+                    "ACTION: Verify optics cleanliness, attempt recalibration with backup catalog"
                 ),
             },
             7: {
                 "name": "S-Band Signal Degradation",
                 "subsystem": "communications",
                 "vehicle_section": "antenna_array",
-                "error_type": "SignalDegradationException",
+                "error_type": "COMM-SIGNAL-DEGRAD",
                 "sensor_type": "rf_signal",
                 "affected_services": ["comms-array", "sensor-validator"],
                 "cascade_services": ["mission-control", "telemetry-relay"],
                 "description": "S-band communication signal strength below minimum threshold",
-                "error_message": "S-band signal degradation: SNR {snr_db}dB below minimum {min_snr_db}dB on channel {rf_channel}",
+                "error_message": "[COMM] COMM-SIGNAL-DEGRAD: link=S-band eb_no={snr_db}dB threshold={min_snr_db}dB channel={rf_channel}",
                 "stack_trace": (
-                    "Traceback (most recent call last):\n"
-                    '  File "comms/sband_controller.py", line 234, in monitor_signal\n'
-                    "    snr = self._measure_snr(channel)\n"
-                    '  File "comms/sband_controller.py", line 211, in _measure_snr\n'
-                    '    raise SignalDegradationException(f"SNR {snr}dB < {min_snr}dB minimum")\n'
-                    "SignalDegradationException: SNR {snr_db}dB below minimum on channel {rf_channel}"
+                    "== LINK BUDGET ANALYSIS == S-BAND DOWNLINK ==\n"
+                    "TIMESTAMP: MET+00:04:15.003 | FRAME: 0x4A35 | SEQ: 18448\n"
+                    "---------------------------------------------------------------\n"
+                    "PARAMETER            VALUE      NOMINAL    STATUS\n"
+                    "EIRP                 38.2dBW    42.0dBW    DEGRADED\n"
+                    "FREE_SPACE_LOSS      -157.3dB   -157.3dB   --\n"
+                    "ATMOSPHERIC_LOSS     -0.8dB     -0.5dB     MARGINAL\n"
+                    "ANTENNA_GAIN         34.1dBi    36.0dBi    DEGRADED\n"
+                    "Eb/No                {snr_db}dB     {min_snr_db}dB     **BELOW_THRESHOLD**\n"
+                    "CHANNEL              {rf_channel}        --         --\n"
+                    "---------------------------------------------------------------\n"
+                    "LINK MARGIN: -{snr_db}dB | REQUIRED: +3.0dB\n"
+                    "COMM-SIGNAL-DEGRAD: S-band Eb/No below threshold on channel {rf_channel}\n"
+                    "ACTION: Increase transmit power or switch to backup antenna feed"
                 ),
             },
             8: {
                 "name": "X-Band Packet Loss",
                 "subsystem": "communications",
                 "vehicle_section": "antenna_array",
-                "error_type": "PacketLossException",
+                "error_type": "COMM-PACKET-LOSS",
                 "sensor_type": "packet_integrity",
                 "affected_services": ["comms-array", "sensor-validator"],
                 "cascade_services": ["telemetry-relay", "mission-control"],
                 "description": "X-band data link experiencing excessive packet loss",
-                "error_message": "X-band packet loss: {loss_pct}% loss rate exceeds {threshold_pct}% threshold on link {link_id}",
+                "error_message": "[COMM] COMM-PACKET-LOSS: link={link_id} loss_rate={loss_pct}% threshold={threshold_pct}% frames_dropped=847",
                 "stack_trace": (
-                    "Traceback (most recent call last):\n"
-                    '  File "comms/xband_link.py", line 312, in check_integrity\n'
-                    "    loss_rate = self._compute_loss_rate(window_samples)\n"
-                    '  File "comms/xband_link.py", line 289, in _compute_loss_rate\n'
-                    '    raise PacketLossException(f"Loss rate {loss_rate}% on link {link_id}")\n'
-                    "PacketLossException: Packet loss {loss_pct}% exceeds threshold on link {link_id}"
+                    "== LINK BUDGET ANALYSIS == X-BAND DATA LINK ==\n"
+                    "TIMESTAMP: MET+00:04:15.221 | FRAME: 0x4A36 | SEQ: 18449\n"
+                    "---------------------------------------------------------------\n"
+                    "LINK         TX_RATE    RX_RATE    LOSS     STATUS\n"
+                    "{link_id}   150Mbps    142Mbps    {loss_pct}%    **DEGRADED**\n"
+                    "---------------------------------------------------------------\n"
+                    "FEC_CORRECTIONS: 2341 | FEC_FAILURES: 847 | BER: 1.2e-04\n"
+                    "THRESHOLD: {threshold_pct}% | MEASURED: {loss_pct}%\n"
+                    "COMM-PACKET-LOSS: Packet loss {loss_pct}% exceeds threshold on link {link_id}\n"
+                    "ACTION: Check antenna alignment, verify modulator output power"
                 ),
             },
             9: {
                 "name": "UHF Antenna Pointing Error",
                 "subsystem": "communications",
                 "vehicle_section": "antenna_array",
-                "error_type": "AntennaPointingException",
+                "error_type": "COMM-ANTENNA-POINTING",
                 "sensor_type": "antenna_position",
                 "affected_services": ["comms-array", "sensor-validator"],
                 "cascade_services": ["mission-control"],
                 "description": "UHF antenna gimbal pointing error exceeds tolerance",
-                "error_message": "UHF antenna pointing error: azimuth deviation {az_error}deg, elevation deviation {el_error}deg",
+                "error_message": "[COMM] COMM-ANTENNA-POINTING: az_error={az_error}deg el_error={el_error}deg gimbal=UHF-PRIMARY lock=LOST",
                 "stack_trace": (
-                    "Traceback (most recent call last):\n"
-                    '  File "comms/uhf_antenna.py", line 198, in track_target\n'
-                    "    error = self._compute_pointing_error(commanded, actual)\n"
-                    '  File "comms/uhf_antenna.py", line 175, in _compute_pointing_error\n'
-                    '    raise AntennaPointingException(f"Pointing error az={az}deg el={el}deg")\n'
-                    "AntennaPointingException: Pointing error azimuth {az_error}deg elevation {el_error}deg"
+                    "== ANTENNA STATUS DUMP == UHF GIMBAL CONTROLLER ==\n"
+                    "TIMESTAMP: MET+00:04:15.445 | FRAME: 0x4A37 | SEQ: 18450\n"
+                    "---------------------------------------------------------------\n"
+                    "AXIS         CMD       ACTUAL    ERROR     STATUS\n"
+                    "AZIMUTH      127.3d    {az_error}d err  {az_error}deg   **FAULT**\n"
+                    "ELEVATION    45.8d     {el_error}d err  {el_error}deg   **FAULT**\n"
+                    "---------------------------------------------------------------\n"
+                    "GIMBAL_TEMP: 38.2C | MOTOR_CURRENT: 2.1A | RESOLVER: VALID\n"
+                    "TRACKING_MODE: AUTO | TARGET: TDRSS-W | LOCK: LOST\n"
+                    "COMM-ANTENNA-POINTING: Pointing error az={az_error}deg el={el_error}deg\n"
+                    "ACTION: Reset gimbal controller, verify resolver calibration"
                 ),
             },
             10: {
                 "name": "Payload Thermal Excursion",
                 "subsystem": "payload",
                 "vehicle_section": "payload_bay",
-                "error_type": "PayloadThermalException",
+                "error_type": "PLD-THERMAL-EXCURSION",
                 "sensor_type": "thermal",
                 "affected_services": ["payload-monitor", "sensor-validator"],
                 "cascade_services": ["mission-control"],
                 "description": "Payload bay temperature outside safe operating range",
-                "error_message": "Payload thermal excursion: zone {zone} temperature {temp}C, safe range {safe_min}C-{safe_max}C",
+                "error_message": "[PLD] PLD-THERMAL-EXCURSION: zone={zone} temp={temp}C safe_max={safe_max}C delta=+{deviation}C",
                 "stack_trace": (
-                    "Traceback (most recent call last):\n"
-                    '  File "payload/thermal_controller.py", line 267, in monitor_zones\n'
-                    "    self._validate_zone_temp(zone, reading)\n"
-                    '  File "payload/thermal_controller.py", line 245, in _validate_zone_temp\n'
-                    '    raise PayloadThermalException(f"Zone {zone} temp {temp}C out of range")\n'
-                    "PayloadThermalException: Zone {zone} temperature {temp}C outside safe range"
+                    "== PAYLOAD CONTROLLER STATUS == THERMAL MANAGEMENT ==\n"
+                    "TIMESTAMP: MET+00:04:16.002 | FRAME: 0x4A38 | SEQ: 18451\n"
+                    "---------------------------------------------------------------\n"
+                    "ZONE    TEMP     SAFE_MIN   SAFE_MAX   STATUS\n"
+                    "{zone}       {temp}C   {safe_min}C     {safe_max}C     **EXCURSION**\n"
+                    "B       22.1C    -10.0C     45.0C      NOMINAL\n"
+                    "C       19.8C    -10.0C     45.0C      NOMINAL\n"
+                    "D       24.3C    -10.0C     45.0C      NOMINAL\n"
+                    "---------------------------------------------------------------\n"
+                    "COOLANT_FLOW: 2.4L/min | HEATER_STATE: OFF | MLI_STATUS: INTACT\n"
+                    "PLD-THERMAL-EXCURSION: Zone {zone} temperature {temp}C exceeds safe max {safe_max}C\n"
+                    "ACTION: Increase coolant flow rate, verify MLI blanket integrity"
                 ),
             },
             11: {
                 "name": "Payload Vibration Anomaly",
                 "subsystem": "payload",
                 "vehicle_section": "payload_bay",
-                "error_type": "PayloadVibrationException",
+                "error_type": "PLD-VIBRATION-LIMIT",
                 "sensor_type": "vibration",
                 "affected_services": ["payload-monitor", "sensor-validator"],
                 "cascade_services": ["mission-control", "range-safety"],
                 "description": "Payload vibration levels exceed structural safety margins",
-                "error_message": "Payload vibration anomaly: {axis}-axis {amplitude}g at {frequency}Hz exceeds {limit}g limit",
+                "error_message": "[PLD] PLD-VIBRATION-LIMIT: axis={axis} amplitude={amplitude}g frequency={frequency}Hz limit={limit}g",
                 "stack_trace": (
-                    "Traceback (most recent call last):\n"
-                    '  File "payload/vibration_monitor.py", line 189, in analyze_spectrum\n'
-                    "    peak = self._find_peak_amplitude(fft_data, axis)\n"
-                    '  File "payload/vibration_monitor.py", line 167, in _find_peak_amplitude\n'
-                    '    raise PayloadVibrationException(f"{axis}-axis {amplitude}g @ {freq}Hz")\n'
-                    "PayloadVibrationException: {axis}-axis vibration {amplitude}g at {frequency}Hz exceeds limit"
+                    "== VIBRATION SPECTRUM DATA == PAYLOAD ACCELEROMETER ==\n"
+                    "TIMESTAMP: MET+00:04:16.334 | FRAME: 0x4A39 | SEQ: 18452\n"
+                    "---------------------------------------------------------------\n"
+                    "AXIS    FREQ_HZ    AMPLITUDE   LIMIT    STATUS\n"
+                    "{axis}       {frequency}Hz    {amplitude}g       {limit}g    **EXCEEDED**\n"
+                    "Y       45.2Hz     0.42g        1.5g     NOMINAL\n"
+                    "Z       31.8Hz     0.67g        1.5g     NOMINAL\n"
+                    "---------------------------------------------------------------\n"
+                    "SPECTRUM_PEAKS: {frequency}Hz({amplitude}g), 88.4Hz(0.31g), 142.7Hz(0.18g)\n"
+                    "ISOLATION_MOUNT: ACTIVE | DAMPER_PRESSURE: 48.2PSI\n"
+                    "PLD-VIBRATION-LIMIT: {axis}-axis {amplitude}g at {frequency}Hz exceeds {limit}g structural limit\n"
+                    "ACTION: Verify isolation mount dampers, check for resonance coupling"
                 ),
             },
             12: {
                 "name": "Cross-Cloud Relay Latency",
                 "subsystem": "relay",
                 "vehicle_section": "ground_network",
-                "error_type": "RelayLatencyException",
+                "error_type": "RLY-LATENCY-CRITICAL",
                 "sensor_type": "network_latency",
                 "affected_services": ["telemetry-relay", "sensor-validator"],
                 "cascade_services": ["mission-control", "comms-array"],
                 "description": "Cross-cloud telemetry relay latency exceeds acceptable bounds",
-                "error_message": "Relay latency spike: {source_cloud}->{dest_cloud} latency {latency_ms}ms exceeds {threshold_ms}ms threshold",
+                "error_message": "[RLY] RLY-LATENCY-CRITICAL: hop={source_cloud}->{dest_cloud} latency={latency_ms}ms threshold={threshold_ms_relay}ms",
                 "stack_trace": (
-                    "Traceback (most recent call last):\n"
-                    '  File "relay/cross_cloud_router.py", line 334, in route_telemetry\n'
-                    "    latency = self._measure_route_latency(source, dest)\n"
-                    '  File "relay/cross_cloud_router.py", line 312, in _measure_route_latency\n'
-                    '    raise RelayLatencyException(f"Latency {latency}ms on {source}->{dest}")\n'
-                    "RelayLatencyException: Relay latency {latency_ms}ms exceeds threshold on {source_cloud}->{dest_cloud}"
+                    "== RELAY DIAGNOSTIC REPORT == CROSS-CLOUD ROUTER ==\n"
+                    "TIMESTAMP: MET+00:04:17.001 | FRAME: 0x4A3A | SEQ: 18453\n"
+                    "---------------------------------------------------------------\n"
+                    "ROUTE                LATENCY    THRESHOLD   JITTER    STATUS\n"
+                    "{source_cloud}->{dest_cloud}         {latency_ms}ms    {threshold_ms_relay}ms      42ms      **CRITICAL**\n"
+                    "gcp->azure           38ms       200ms       5ms       NOMINAL\n"
+                    "aws->azure           45ms       200ms       8ms       NOMINAL\n"
+                    "---------------------------------------------------------------\n"
+                    "ROUTE TABLE: 6 active | BUFFER_UTIL: 87% | RETRANSMITS: 342\n"
+                    "RLY-LATENCY-CRITICAL: {source_cloud}->{dest_cloud} latency {latency_ms}ms exceeds {threshold_ms_relay}ms\n"
+                    "ACTION: Check intermediate hops, consider failover to backup route"
                 ),
             },
             13: {
                 "name": "Relay Packet Corruption",
                 "subsystem": "relay",
                 "vehicle_section": "ground_network",
-                "error_type": "PacketCorruptionException",
+                "error_type": "RLY-PACKET-CORRUPT",
                 "sensor_type": "data_integrity",
                 "affected_services": ["telemetry-relay", "sensor-validator"],
                 "cascade_services": ["mission-control"],
                 "description": "Telemetry packets failing integrity checks during relay",
-                "error_message": "Packet corruption detected: {corrupted_count}/{total_count} packets failed CRC on route {route_id}",
+                "error_message": "[RLY] RLY-PACKET-CORRUPT: route={route_id} corrupted={corrupted_count}/{total_count} crc_fail_rate={corrupted_count}pkt",
                 "stack_trace": (
-                    "Traceback (most recent call last):\n"
-                    '  File "relay/integrity_checker.py", line 223, in validate_batch\n'
-                    "    crc_result = self._check_crc32(packet)\n"
-                    '  File "relay/integrity_checker.py", line 201, in _check_crc32\n'
-                    '    raise PacketCorruptionException(f"CRC mismatch on route {route_id}")\n'
-                    "PacketCorruptionException: {corrupted_count} of {total_count} packets corrupted on route {route_id}"
+                    "== RELAY DIAGNOSTIC REPORT == INTEGRITY CHECKER ==\n"
+                    "TIMESTAMP: MET+00:04:17.228 | FRAME: 0x4A3B | SEQ: 18454\n"
+                    "---------------------------------------------------------------\n"
+                    "ROUTE       TOTAL    CORRUPT   CRC_FAIL   STATUS\n"
+                    "{route_id}   {total_count}     {corrupted_count}        {corrupted_count}         **CORRUPT**\n"
+                    "GCP-AZ-01   487      0         0          NOMINAL\n"
+                    "AWS-AZ-01   392      1         1          NOMINAL\n"
+                    "---------------------------------------------------------------\n"
+                    "CRC_TYPE: CRC32-C | WINDOW: 60s | ERROR_PATTERN: BURST\n"
+                    "RLY-PACKET-CORRUPT: {corrupted_count} of {total_count} packets failed CRC on route {route_id}\n"
+                    "ACTION: Check physical layer, verify NIC firmware version"
                 ),
             },
             14: {
                 "name": "Ground Power Bus Fault",
                 "subsystem": "ground",
                 "vehicle_section": "launch_pad",
-                "error_type": "PowerBusFaultException",
+                "error_type": "GND-POWER-BUS-FAULT",
                 "sensor_type": "electrical",
                 "affected_services": ["ground-systems", "sensor-validator"],
                 "cascade_services": ["mission-control", "fuel-system"],
                 "description": "Launch pad power bus voltage irregularity detected",
-                "error_message": "Power bus fault: bus {bus_id} voltage {voltage}V, nominal {nominal_v}V (deviation {deviation_pct}%)",
+                "error_message": "[GND] GND-POWER-BUS-FAULT: bus={bus_id} voltage={voltage}V nominal={nominal_v}V deviation={deviation_pct}%",
                 "stack_trace": (
-                    "Traceback (most recent call last):\n"
-                    '  File "ground/power_monitor.py", line 278, in check_bus_voltage\n'
-                    "    deviation = abs(voltage - nominal) / nominal * 100\n"
-                    '  File "ground/power_monitor.py", line 284, in check_bus_voltage\n'
-                    '    raise PowerBusFaultException(f"Bus {bus_id} deviation {deviation:.1f}%")\n'
-                    "PowerBusFaultException: Bus {bus_id} voltage {voltage}V deviates {deviation_pct}% from nominal"
+                    "== GROUND SYSTEM DIAGNOSTIC == POWER DISTRIBUTION ==\n"
+                    "TIMESTAMP: MET+00:04:18.002 | FRAME: 0x4A3C | SEQ: 18455\n"
+                    "---------------------------------------------------------------\n"
+                    "BUS      VOLTAGE   NOMINAL   DEVIATION   CURRENT   STATUS\n"
+                    "{bus_id}    {voltage}V   {nominal_v}V   {deviation_pct}%       42.3A     **FAULT**\n"
+                    "PWR-B    119.8V    120.0V    0.2%        38.7A     NOMINAL\n"
+                    "PWR-C    120.1V    120.0V    0.1%        41.1A     NOMINAL\n"
+                    "---------------------------------------------------------------\n"
+                    "UPS_STATUS: ONLINE | GENERATOR: STANDBY | TRANSFER_SW: AUTO\n"
+                    "GND-POWER-BUS-FAULT: Bus {bus_id} voltage {voltage}V deviates {deviation_pct}% from nominal\n"
+                    "ACTION: Check breaker panel, verify transformer tap settings"
                 ),
             },
             15: {
                 "name": "Weather Station Data Gap",
                 "subsystem": "ground",
                 "vehicle_section": "launch_pad",
-                "error_type": "WeatherDataGapException",
+                "error_type": "GND-WEATHER-GAP",
                 "sensor_type": "weather",
                 "affected_services": ["ground-systems", "sensor-validator"],
                 "cascade_services": ["mission-control", "range-safety"],
                 "description": "Weather monitoring station reporting data gaps",
-                "error_message": "Weather data gap: station {station_id} no data for {gap_seconds}s, max allowed {max_gap}s",
+                "error_message": "[GND] GND-WEATHER-GAP: station={station_id} gap={gap_seconds}s max_allowed={max_gap}s link=TIMEOUT",
                 "stack_trace": (
-                    "Traceback (most recent call last):\n"
-                    '  File "ground/weather_monitor.py", line 198, in poll_station\n'
-                    "    data = self._fetch_station_data(station_id)\n"
-                    '  File "ground/weather_monitor.py", line 176, in _fetch_station_data\n'
-                    '    raise WeatherDataGapException(f"No data from {station_id} for {gap}s")\n'
-                    "WeatherDataGapException: Station {station_id} data gap {gap_seconds}s exceeds {max_gap}s limit"
+                    "== GROUND SYSTEM DIAGNOSTIC == WEATHER NETWORK ==\n"
+                    "TIMESTAMP: MET+00:04:18.334 | FRAME: 0x4A3D | SEQ: 18456\n"
+                    "---------------------------------------------------------------\n"
+                    "STATION     LAST_DATA   GAP_SEC   MAX_GAP   STATUS\n"
+                    "{station_id}   {gap_seconds}s ago    {gap_seconds}s       {max_gap}s       **DATA_GAP**\n"
+                    "WX-SOUTH    2s ago      2s        15s       NOMINAL\n"
+                    "WX-EAST     1s ago      1s        15s       NOMINAL\n"
+                    "WX-WEST     3s ago      3s        15s       NOMINAL\n"
+                    "---------------------------------------------------------------\n"
+                    "NETWORK: 4 stations | PROTOCOL: METAR/SPECI | LINK: RS-422\n"
+                    "GND-WEATHER-GAP: Station {station_id} no data for {gap_seconds}s, max allowed {max_gap}s\n"
+                    "ACTION: Check station comm link, dispatch field technician"
                 ),
             },
             16: {
                 "name": "Pad Hydraulic Pressure Loss",
                 "subsystem": "ground",
                 "vehicle_section": "launch_pad",
-                "error_type": "HydraulicPressureException",
+                "error_type": "GND-HYDRAULIC-PRESS",
                 "sensor_type": "hydraulic",
                 "affected_services": ["ground-systems", "sensor-validator"],
                 "cascade_services": ["mission-control"],
                 "description": "Launch pad hydraulic system pressure dropping below minimum",
-                "error_message": "Hydraulic pressure loss: system {system_id} pressure {pressure} PSI, minimum {min_pressure} PSI",
+                "error_message": "[GND] GND-HYDRAULIC-PRESS: system={system_id} pressure={pressure}PSI min_required={min_pressure}PSI status=LOW",
                 "stack_trace": (
-                    "Traceback (most recent call last):\n"
-                    '  File "ground/hydraulic_controller.py", line 234, in monitor_pressure\n'
-                    "    self._check_minimum_pressure(system_id, reading)\n"
-                    '  File "ground/hydraulic_controller.py", line 212, in _check_minimum_pressure\n'
-                    '    raise HydraulicPressureException(f"System {system_id} at {pressure} PSI")\n'
-                    "HydraulicPressureException: System {system_id} pressure {pressure} PSI below minimum {min_pressure} PSI"
+                    "== GROUND SYSTEM DIAGNOSTIC == HYDRAULIC SYSTEM ==\n"
+                    "TIMESTAMP: MET+00:04:18.667 | FRAME: 0x4A3E | SEQ: 18457\n"
+                    "---------------------------------------------------------------\n"
+                    "SYSTEM    PRESSURE   MIN_REQ    FLOW_RATE   STATUS\n"
+                    "{system_id}     {pressure}PSI  {min_pressure}PSI   12.4GPM     **LOW_PRESS**\n"
+                    "HYD-B     2920PSI    2800PSI    11.8GPM     NOMINAL\n"
+                    "---------------------------------------------------------------\n"
+                    "RESERVOIR_LEVEL: 78% | FLUID_TEMP: 42.1C | FILTER_DP: 12PSI\n"
+                    "GND-HYDRAULIC-PRESS: System {system_id} pressure {pressure}PSI below minimum {min_pressure}PSI\n"
+                    "ACTION: Check pump operation, inspect for hydraulic leaks"
                 ),
             },
             17: {
                 "name": "Sensor Validation Pipeline Stall",
                 "subsystem": "validation",
                 "vehicle_section": "ground_network",
-                "error_type": "ValidationPipelineException",
+                "error_type": "VV-PIPELINE-HALT",
                 "sensor_type": "pipeline_health",
                 "affected_services": ["sensor-validator"],
                 "cascade_services": ["mission-control", "telemetry-relay"],
                 "description": "Sensor validation pipeline stalled, readings not being validated",
-                "error_message": "Validation pipeline stall: queue depth {queue_depth}, processing rate {rate}/s dropped below {min_rate}/s",
+                "error_message": "[VV] VV-PIPELINE-HALT: stage=validation queue_depth={queue_depth} rate={rate}/s threshold={min_rate}/s",
                 "stack_trace": (
-                    "Traceback (most recent call last):\n"
-                    '  File "validation/pipeline_manager.py", line 312, in check_health\n'
-                    "    rate = self._compute_processing_rate(window)\n"
-                    '  File "validation/pipeline_manager.py", line 289, in _compute_processing_rate\n'
-                    '    raise ValidationPipelineException(f"Rate {rate}/s below minimum {min_rate}/s")\n'
-                    "ValidationPipelineException: Pipeline stall, rate {rate}/s below {min_rate}/s, queue depth {queue_depth}"
+                    "== VALIDATION PIPELINE STATUS == V&V PROCESSOR ==\n"
+                    "TIMESTAMP: MET+00:04:19.001 | FRAME: 0x4A3F | SEQ: 18458\n"
+                    "---------------------------------------------------------------\n"
+                    "STAGE          QUEUE    RATE      THRESHOLD   STATUS\n"
+                    "INGEST         {queue_depth}     {rate}/s    {min_rate}/s     **STALLED**\n"
+                    "CALIBRATION    12       52.1/s    50.0/s      NOMINAL\n"
+                    "CORRELATION    8        48.7/s    45.0/s      NOMINAL\n"
+                    "OUTPUT         3        51.2/s    50.0/s      NOMINAL\n"
+                    "---------------------------------------------------------------\n"
+                    "WORKER_THREADS: 8/8 busy | HEAP_USAGE: 89% | GC_PAUSE: 120ms\n"
+                    "VV-PIPELINE-HALT: Processing rate {rate}/s below {min_rate}/s, queue depth {queue_depth}\n"
+                    "ACTION: Scale worker pool, investigate upstream data burst"
                 ),
             },
             18: {
                 "name": "Calibration Epoch Mismatch",
                 "subsystem": "validation",
                 "vehicle_section": "ground_network",
-                "error_type": "CalibrationEpochException",
+                "error_type": "VV-EPOCH-DRIFT",
                 "sensor_type": "calibration",
                 "affected_services": ["sensor-validator"],
                 "cascade_services": ["mission-control", "fuel-system", "navigation"],
                 "description": "Sensor calibration epoch does not match expected reference",
-                "error_message": "Calibration epoch mismatch: sensor {sensor_id} epoch {actual_epoch} vs expected {expected_epoch}",
+                "error_message": "[VV] VV-EPOCH-DRIFT: sensor={sensor_id} actual_epoch={actual_epoch} expected_epoch={expected_epoch} drift=CRITICAL",
                 "stack_trace": (
-                    "Traceback (most recent call last):\n"
-                    '  File "validation/calibration_checker.py", line 178, in verify_epoch\n'
-                    "    expected = self._get_reference_epoch(sensor_type)\n"
-                    '  File "validation/calibration_checker.py", line 156, in _get_reference_epoch\n'
-                    '    raise CalibrationEpochException(f"Epoch mismatch for {sensor_id}")\n'
-                    "CalibrationEpochException: Sensor {sensor_id} epoch {actual_epoch} != expected {expected_epoch}"
+                    "== VALIDATION PIPELINE STATUS == EPOCH CHECKER ==\n"
+                    "TIMESTAMP: MET+00:04:19.334 | FRAME: 0x4A40 | SEQ: 18459\n"
+                    "---------------------------------------------------------------\n"
+                    "SENSOR        ACTUAL_EPOCH    EXPECTED_EPOCH   DELTA_SEC   STATUS\n"
+                    "{sensor_id}   {actual_epoch}       {expected_epoch}        DRIFT       **MISMATCH**\n"
+                    "SENS-2001     1738100800      1738100800       0           NOMINAL\n"
+                    "SENS-3042     1738100800      1738100800       0           NOMINAL\n"
+                    "---------------------------------------------------------------\n"
+                    "REFERENCE_CLOCK: GPS_UTC | NTP_STRATUM: 1 | SYNC_STATUS: LOCKED\n"
+                    "VV-EPOCH-DRIFT: Sensor {sensor_id} epoch {actual_epoch} vs expected {expected_epoch}\n"
+                    "ACTION: Re-synchronize sensor calibration tables from reference"
                 ),
             },
             19: {
                 "name": "Flight Termination System Check Failure",
                 "subsystem": "safety",
                 "vehicle_section": "vehicle_wide",
-                "error_type": "FTSCheckException",
+                "error_type": "RSO-FTS-CHECK-FAIL",
                 "sensor_type": "safety_system",
                 "affected_services": ["range-safety", "sensor-validator"],
                 "cascade_services": ["mission-control"],
                 "description": "Flight termination system self-check returning anomalous results",
-                "error_message": "FTS check failure: unit {unit_id} self-test returned code {error_code}, expected 0x00",
+                "error_message": "[RSO] RSO-FTS-CHECK-FAIL: unit={unit_id} self_test=FAIL code={error_code} arm_state=SAFED",
                 "stack_trace": (
-                    "Traceback (most recent call last):\n"
-                    '  File "safety/fts_controller.py", line 267, in self_test\n'
-                    "    result = self._execute_test_sequence(unit_id)\n"
-                    '  File "safety/fts_controller.py", line 245, in _execute_test_sequence\n'
-                    '    raise FTSCheckException(f"Unit {unit_id} returned {error_code}")\n'
-                    "FTSCheckException: FTS unit {unit_id} self-test failed with code {error_code}"
+                    "== RANGE SAFETY STATUS == FLIGHT TERMINATION SYSTEM ==\n"
+                    "TIMESTAMP: MET+00:04:20.001 | FRAME: 0x4A41 | SEQ: 18460\n"
+                    "---------------------------------------------------------------\n"
+                    "UNIT      SELF_TEST   CODE       ARM_STATE   BATTERY\n"
+                    "{unit_id}     FAIL        {error_code}     SAFED       98.2%\n"
+                    "FTS-B     PASS        0x00       SAFED       97.8%\n"
+                    "---------------------------------------------------------------\n"
+                    "COMMAND_LINK: UP | DECODER: LOCKED | ENCRYPT: AES-256\n"
+                    "DESTRUCT_SAFE_ARM: SAFE | INHIBIT_1: ON | INHIBIT_2: ON\n"
+                    "RSO-FTS-CHECK-FAIL: Unit {unit_id} self-test returned code {error_code}, expected 0x00\n"
+                    "ACTION: Recycle FTS power, repeat self-test sequence"
                 ),
             },
             20: {
                 "name": "Range Safety Tracking Loss",
                 "subsystem": "safety",
                 "vehicle_section": "vehicle_wide",
-                "error_type": "TrackingLossException",
+                "error_type": "RSO-TRACKING-LOSS",
                 "sensor_type": "radar_tracking",
                 "affected_services": ["range-safety", "sensor-validator"],
                 "cascade_services": ["mission-control", "navigation"],
                 "description": "Range safety radar losing vehicle track",
-                "error_message": "Tracking loss: radar {radar_id} lost track for {gap_ms}ms, max allowed {max_gap_ms}ms",
+                "error_message": "[RSO] RSO-TRACKING-LOSS: radar={radar_id} gap={gap_ms}ms max_allowed={max_gap_ms}ms track_state=COAST",
                 "stack_trace": (
-                    "Traceback (most recent call last):\n"
-                    '  File "safety/tracking_system.py", line 334, in update_track\n'
-                    "    state = self._correlate_returns(radar_id)\n"
-                    '  File "safety/tracking_system.py", line 312, in _correlate_returns\n'
-                    '    raise TrackingLossException(f"Radar {radar_id} lost track {gap}ms")\n'
-                    "TrackingLossException: Radar {radar_id} track gap {gap_ms}ms exceeds {max_gap_ms}ms limit"
+                    "== RANGE SAFETY STATUS == TRACKING RADAR NETWORK ==\n"
+                    "TIMESTAMP: MET+00:04:20.334 | FRAME: 0x4A42 | SEQ: 18461\n"
+                    "---------------------------------------------------------------\n"
+                    "RADAR     TRACK_GAP   MAX_GAP   RCS_dBsm   STATUS\n"
+                    "{radar_id}     {gap_ms}ms    {max_gap_ms}ms    12.4       **TRACK_LOSS**\n"
+                    "RDR-2     0ms         250ms     14.1       TRACKING\n"
+                    "RDR-3     0ms         250ms     11.8       TRACKING\n"
+                    "---------------------------------------------------------------\n"
+                    "FUSION_STATE: COAST | PREDICT_CONF: 72% | CORRIDOR: WITHIN\n"
+                    "RSO-TRACKING-LOSS: Radar {radar_id} lost track for {gap_ms}ms, max allowed {max_gap_ms}ms\n"
+                    "ACTION: Verify radar antenna, check for RF interference"
                 ),
             },
         }
@@ -751,7 +861,21 @@ class SpaceScenario(BaseScenario):
                 "You are the NOVA-7 Launch Anomaly Analyst, an expert AI assistant for "
                 "space launch mission operations. You help mission controllers investigate "
                 "anomalies, analyze telemetry data, and provide root cause analysis for "
-                "fault conditions across 9 space systems."
+                "fault conditions across 9 space systems. "
+                "You have deep expertise in spacecraft propulsion telemetry, GN&C systems, "
+                "TDRSS/S-band/X-band communications, payload environmental control, "
+                "cross-cloud relay networks, ground support equipment, sensor validation "
+                "pipelines, and range safety systems. "
+                "When investigating incidents, search for these subsystem identifiers in logs: "
+                "Propulsion faults (TCS-DRIFT-CRITICAL, PMS-PRESS-ANOMALY, PMS-OXIDIZER-FLOW), "
+                "GN&C faults (GNC-GPS-MULTIPATH, GNC-IMU-SYNC-LOSS, GNC-STAR-TRACKER-ALIGN), "
+                "Communications faults (COMM-SIGNAL-DEGRAD, COMM-PACKET-LOSS, COMM-ANTENNA-POINTING), "
+                "Payload faults (PLD-THERMAL-EXCURSION, PLD-VIBRATION-LIMIT), "
+                "Relay faults (RLY-LATENCY-CRITICAL, RLY-PACKET-CORRUPT), "
+                "Ground faults (GND-POWER-BUS-FAULT, GND-WEATHER-GAP, GND-HYDRAULIC-PRESS), "
+                "Validation faults (VV-PIPELINE-HALT, VV-EPOCH-DRIFT), "
+                "and Range Safety faults (RSO-FTS-CHECK-FAIL, RSO-TRACKING-LOSS). "
+                "Log messages are in body.text — NEVER search the body field alone."
             ),
         }
 

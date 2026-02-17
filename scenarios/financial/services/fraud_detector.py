@@ -51,7 +51,7 @@ class FraudDetectorService(BaseService):
         decision = "ALLOW" if score < 0.7 else "BLOCK"
         self.emit_log(
             "INFO",
-            f"Fraud scan complete: score {score}, decision {decision} — model v3.2.1",
+            f"[COMPL] fraud_scan score={score} decision={decision} model=v3.2.1",
             {
                 "operation": "fraud_scan",
                 "fraud.score": score,
@@ -65,7 +65,7 @@ class FraudDetectorService(BaseService):
         matches = random.randint(0, 2)
         self.emit_log(
             "INFO",
-            f"Pattern check: {pattern} — {matches} potential matches in last window",
+            f"[COMPL] pattern_check pattern={pattern} matches={matches} status={'CLEAR' if matches == 0 else 'FLAGGED'}",
             {
                 "operation": "pattern_check",
                 "pattern.name": pattern,
@@ -80,7 +80,7 @@ class FraudDetectorService(BaseService):
         f1 = round(2 * precision * recall / (precision + recall), 3)
         self.emit_log(
             "INFO",
-            f"Model performance: precision={precision}, recall={recall}, F1={f1} — within targets",
+            f"[COMPL] model_performance precision={precision} recall={recall} f1={f1} status=WITHIN_TARGETS",
             {
                 "operation": "model_performance",
                 "model.precision": precision,

@@ -52,7 +52,7 @@ class GameServerService(BaseService):
         entities = random.randint(500, 5000)
         self.emit_log(
             "INFO",
-            f"Tick {self._tick_count}: processed {players_in_tick} players, {entities} entities in region {region}",
+            f"[Net] tick={self._tick_count} players={players_in_tick} entities={entities} region={region} server_fps=62.8 status=RUNNING",
             {
                 "operation": "tick_cycle",
                 "tick.number": self._tick_count,
@@ -68,7 +68,7 @@ class GameServerService(BaseService):
         match_id = f"MATCH-{random.randint(100000, 999999)}"
         self.emit_log(
             "INFO",
-            f"Player action '{action}' processed in {latency_ms}ms for match {match_id}",
+            f"[Engine] action={action} latency={latency_ms}ms match={match_id} result=ACK input_seq={random.randint(10000, 99999)}",
             {
                 "operation": "player_action",
                 "action.type": action,
@@ -81,7 +81,7 @@ class GameServerService(BaseService):
         self._active_matches = max(50, self._active_matches + random.randint(-10, 10))
         self.emit_log(
             "INFO",
-            f"Server performance: {self._active_matches} active matches, tick {self._tick_count}, all regions operational",
+            f"[Engine] perf_report active_matches={self._active_matches} total_ticks={self._tick_count} regions=4/4 gc_pause_ms=0.3 heap_mb=1204",
             {
                 "operation": "perf_report",
                 "perf.active_matches": self._active_matches,

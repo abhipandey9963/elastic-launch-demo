@@ -51,7 +51,7 @@ class LeaderboardApiService(BaseService):
         score = random.randint(1000, 50000)
         self.emit_log(
             "INFO",
-            f"Rank update on '{board}': {player_id} moved #{old_rank} -> #{new_rank} (score {score})",
+            f"[LB] rank_update board={board} player={player_id} old_rank={old_rank} new_rank={new_rank} score={score} zset_ops=2",
             {
                 "operation": "rank_update",
                 "leaderboard.board": board,
@@ -69,7 +69,7 @@ class LeaderboardApiService(BaseService):
         season = f"S{random.randint(1, 12)}"
         self.emit_log(
             "INFO",
-            f"Season {season} progress: {player_id} at tier {tier}, gained {xp_gained} XP this match",
+            f"[LB] season_progress season={season} player={player_id} tier={tier} xp_gained={xp_gained} premium=true",
             {
                 "operation": "season_progress",
                 "season.id": season,
@@ -82,7 +82,7 @@ class LeaderboardApiService(BaseService):
     def _emit_board_snapshot(self) -> None:
         self.emit_log(
             "INFO",
-            f"Leaderboard snapshot: {self._rank_updates} rank updates across {len(self._boards)} boards",
+            f"[LB] snapshot rank_updates={self._rank_updates} boards={len(self._boards)} redis_mem=142MB consistency=OK",
             {
                 "operation": "board_snapshot",
                 "snapshot.rank_updates": self._rank_updates,

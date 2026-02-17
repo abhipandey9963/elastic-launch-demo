@@ -51,7 +51,7 @@ class MatchmakingEngineService(BaseService):
         wait_s = round(random.uniform(5.0, 45.0), 1)
         self.emit_log(
             "INFO",
-            f"Match formed in '{queue}': {team_size}v{team_size}, avg MMR {avg_mmr} (spread {mmr_spread}), wait {wait_s}s",
+            f"[MM] match_formed pool={queue} teams={team_size}v{team_size} avg_mmr={avg_mmr} spread={mmr_spread} wait={wait_s}s status=READY",
             {
                 "operation": "match_formed",
                 "match.queue": queue,
@@ -68,7 +68,7 @@ class MatchmakingEngineService(BaseService):
         avg_wait = round(random.uniform(5.0, 35.0), 1)
         self.emit_log(
             "INFO",
-            f"Queue '{queue}' status: {depth} players waiting, avg wait {avg_wait}s",
+            f"[MM] queue_status pool={queue} depth={depth} avg_wait={avg_wait}s dequeue_rate=12/s",
             {
                 "operation": "queue_status",
                 "queue.name": queue,
@@ -81,7 +81,7 @@ class MatchmakingEngineService(BaseService):
         total_waiting = random.randint(500, 5000)
         self.emit_log(
             "INFO",
-            f"Matchmaking summary: {self._matches_formed} matches formed, {total_waiting} players in queues",
+            f"[MM] summary matches_formed={self._matches_formed} total_waiting={total_waiting} pools=4 avg_quality=0.87",
             {
                 "operation": "queue_summary",
                 "summary.matches_formed": self._matches_formed,

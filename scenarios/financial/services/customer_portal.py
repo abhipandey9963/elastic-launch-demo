@@ -57,7 +57,7 @@ class CustomerPortalService(BaseService):
         latency_ms = random.randint(20, 200)
         self.emit_log(
             "INFO",
-            f"Client action: {action} completed in {latency_ms}ms — 200 OK",
+            f"[PORTAL] client_action action={action} latency_ms={latency_ms} http_status=200",
             {
                 "operation": "client_action",
                 "action.type": action,
@@ -73,7 +73,7 @@ class CustomerPortalService(BaseService):
         pnl_pct = round(random.uniform(-2.0, 5.0), 2)
         self.emit_log(
             "INFO",
-            f"Portfolio {portfolio_id}: {positions} positions, value ${total_value:,.2f}, P&L {pnl_pct:+.2f}%",
+            f"[PORTAL] portfolio_update portfolio={portfolio_id} positions={positions} value=${total_value:,.2f} pnl={pnl_pct:+.2f}%",
             {
                 "operation": "portfolio_update",
                 "portfolio.id": portfolio_id,
@@ -87,7 +87,7 @@ class CustomerPortalService(BaseService):
         expired = random.randint(0, 5)
         self.emit_log(
             "INFO",
-            f"Session summary: {self._active_sessions} active, {expired} expired in last window — capacity nominal",
+            f"[PORTAL] session_summary active={self._active_sessions} expired={expired} status=NOMINAL",
             {
                 "operation": "session_summary",
                 "session.active": self._active_sessions,

@@ -50,7 +50,7 @@ class ImagingServiceService(BaseService):
         transfer_ms = random.randint(500, 3000)
         self.emit_log(
             "INFO",
-            f"DICOM C-STORE complete: {modality} study {study_uid} — {images} images, {size_mb}MB in {transfer_ms}ms",
+            f"[PACS] c_store_complete modality={modality} study={study_uid} images={images} size={size_mb}MB transfer_ms={transfer_ms} status=STORED",
             {
                 "operation": "study_transfer",
                 "imaging.modality": modality,
@@ -68,7 +68,7 @@ class ImagingServiceService(BaseService):
         next_patient = f"PT-{random.randint(100000, 999999)}"
         self.emit_log(
             "INFO",
-            f"Modality worklist: {modality} {pending} exams queued, next patient {next_patient}",
+            f"[PACS] mwl_query modality={modality} queued={pending} next_patient={next_patient} status=OK",
             {
                 "operation": "worklist_query",
                 "imaging.modality": modality,
@@ -82,7 +82,7 @@ class ImagingServiceService(BaseService):
         total_tb = round(random.uniform(40.0, 80.0), 1)
         self.emit_log(
             "INFO",
-            f"PACS status: {volumes_online} volumes online, {total_tb}TB stored, {self._studies_processed} studies today — archive nominal",
+            f"[PACS] storage_status volumes={volumes_online} total_tb={total_tb} studies_today={self._studies_processed} archive=NOMINAL",
             {
                 "operation": "pacs_status",
                 "pacs.volumes_online": volumes_online,

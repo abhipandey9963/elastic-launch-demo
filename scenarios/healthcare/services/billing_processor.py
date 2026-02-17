@@ -49,7 +49,7 @@ class BillingProcessorService(BaseService):
         dx_code = random.choice(["I10", "E11.9", "J18.1", "M54.5", "K21.0", "N39.0"])
         self.emit_log(
             "INFO",
-            f"Claim submitted: {claim_id} to {payer} charges ${charges:.2f} DX {dx_code} — accepted for adjudication",
+            f"[CLAIMS] x12_837_submit claim={claim_id} payer={payer} charges=${charges:.2f} dx={dx_code} status=ACCEPTED",
             {
                 "operation": "claim_submission",
                 "billing.claim_id": claim_id,
@@ -67,7 +67,7 @@ class BillingProcessorService(BaseService):
         status = random.choice(["ELIGIBLE", "ELIGIBLE", "ELIGIBLE", "NEEDS_AUTH"])
         self.emit_log(
             "INFO",
-            f"Eligibility verified: {patient_id} via {payer} — {status} in {response_ms}ms",
+            f"[CLAIMS] x12_271_response patient={patient_id} payer={payer} eligibility={status} response_ms={response_ms}",
             {
                 "operation": "eligibility_check",
                 "billing.payer": payer,
@@ -83,7 +83,7 @@ class BillingProcessorService(BaseService):
         accepted = int(batch_size * random.uniform(0.88, 0.98))
         self.emit_log(
             "INFO",
-            f"Batch {batch_id}: {accepted}/{batch_size} claims accepted, revenue cycle on track",
+            f"[CLAIMS] batch_status batch={batch_id} accepted={accepted}/{batch_size} total_processed={self._claims_processed} rcm=ON_TRACK",
             {
                 "operation": "batch_status",
                 "billing.batch_id": batch_id,

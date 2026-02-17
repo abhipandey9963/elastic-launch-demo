@@ -56,7 +56,7 @@ class ComplianceMonitorService(BaseService):
         latency_ms = random.randint(50, 500)
         self.emit_log(
             "INFO",
-            f"AML screening complete: result {result}, latency {latency_ms}ms — SLA met",
+            f"[COMPL] aml_screening result={result} latency_ms={latency_ms} sla_met=true",
             {
                 "operation": "aml_screening",
                 "screening.result": result,
@@ -70,7 +70,7 @@ class ComplianceMonitorService(BaseService):
         hits = random.randint(0, 1)
         self.emit_log(
             "INFO",
-            f"Watchlist check: {entries_checked} entries screened, {hits} hits — review pending" if hits else f"Watchlist check: {entries_checked} entries screened — all clear",
+            f"[COMPL] watchlist_check entries_checked={entries_checked} hits={hits} status={'REVIEW_PENDING' if hits else 'CLEAR'}",
             {
                 "operation": "watchlist_check",
                 "watchlist.entries_checked": entries_checked,
@@ -83,7 +83,7 @@ class ComplianceMonitorService(BaseService):
         report = random.choice(self.REPORT_TYPES)
         self.emit_log(
             "INFO",
-            f"Regulatory status: {regulation} compliance checks passed, {report} report on schedule",
+            f"[COMPL] regulatory_status regulation={regulation} report={report} status=COMPLIANT",
             {
                 "operation": "regulatory_status",
                 "regulation.name": regulation,

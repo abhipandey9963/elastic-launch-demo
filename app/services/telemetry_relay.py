@@ -40,7 +40,7 @@ class TelemetryRelayService(BaseService):
             )
             self.emit_log(
                 "INFO",
-                f"Relay {source}->{dest}: {packets} packets, latency {latency}ms, {dropped} dropped",
+                f"[RLY] route={source}->{dest} packets={packets} latency={latency}ms dropped={dropped} status=NOMINAL",
                 {
                     "relay.source_cloud": source,
                     "relay.dest_cloud": dest,
@@ -56,7 +56,7 @@ class TelemetryRelayService(BaseService):
         self.emit_metric("relay.total_throughput", total_throughput, "packets/s")
         self.emit_log(
             "INFO",
-            f"Relay aggregate: {total_throughput} packets/s across all routes — nominal",
+            f"[RLY] aggregate throughput={total_throughput}pkt/s routes=6 buffer_util=34% status=NOMINAL",
             {
                 "operation": "relay_summary",
                 "relay.total_throughput": total_throughput,

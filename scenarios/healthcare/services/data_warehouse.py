@@ -51,7 +51,7 @@ class DataWarehouseService(BaseService):
         elapsed_s = random.randint(30, 600)
         self.emit_log(
             "INFO",
-            f"ETL progress: {pipeline} stage {stage} — {rows}/{total} rows in {elapsed_s}s",
+            f"[DW] etl_progress pipeline={pipeline} stage={stage} rows={rows}/{total} elapsed={elapsed_s}s status=RUNNING",
             {
                 "operation": "etl_progress",
                 "etl.pipeline_id": pipeline,
@@ -69,7 +69,7 @@ class DataWarehouseService(BaseService):
         records_accessed = random.randint(1, 500)
         self.emit_log(
             "INFO",
-            f"HIPAA audit: {action} by {user} — {records_accessed} records, chain hash verified",
+            f"[DW] hipaa_audit action={action} user={user} records={records_accessed} chain_hash=VERIFIED",
             {
                 "operation": "audit_log",
                 "audit.action": action,
@@ -84,7 +84,7 @@ class DataWarehouseService(BaseService):
         total_entries = random.randint(500000, 2000000)
         self.emit_log(
             "INFO",
-            f"Audit integrity check: {chains_verified} chains verified, {total_entries} total entries — hash chain intact",
+            f"[DW] integrity_check chains_verified={chains_verified} total_entries={total_entries} hash_chain=INTACT",
             {
                 "operation": "integrity_check",
                 "audit.chains_verified": chains_verified,

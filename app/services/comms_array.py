@@ -52,7 +52,7 @@ class CommsArrayService(BaseService):
 
             self.emit_log(
                 "INFO",
-                f"{ant['name']} antenna: signal {signal_db}dB, packet loss {packet_loss}% on {channel}",
+                f"[COMM] antenna={ant['name']} channel={channel} signal={signal_db}dB loss={packet_loss}% lock=ACQUIRED status=NOMINAL",
                 {
                     "comms.antenna": ant["name"],
                     "comms.signal_db": signal_db,
@@ -67,7 +67,7 @@ class CommsArrayService(BaseService):
         self.emit_metric("comms.total_throughput_mbps", total_throughput, "Mbps")
         self.emit_log(
             "INFO",
-            f"Communications link budget nominal — total throughput {total_throughput} Mbps",
+            f"[COMM] link_budget throughput={total_throughput}Mbps margin=+3.2dB status=NOMINAL",
             {
                 "operation": "link_budget",
                 "comms.throughput_mbps": total_throughput,

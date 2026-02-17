@@ -52,7 +52,7 @@ class SettlementProcessorService(BaseService):
         value = round(qty * random.uniform(50, 400), 2)
         self.emit_log(
             "INFO",
-            f"Settlement processed: {instrument} qty {qty} value ${value} with {counterparty} — status SETTLED",
+            f"[SETTLE] settlement_processed instrument={instrument} qty={qty} value=${value} counterparty={counterparty} status=SETTLED",
             {
                 "operation": "settlement_process",
                 "settlement.instrument": instrument,
@@ -68,7 +68,7 @@ class SettlementProcessorService(BaseService):
         net_receivable = round(random.uniform(1000000, 50000000), 2)
         self.emit_log(
             "INFO",
-            f"Net obligations: payable ${net_payable:,.2f}, receivable ${net_receivable:,.2f} — balanced",
+            f"[SETTLE] obligation_status payable=${net_payable:,.2f} receivable=${net_receivable:,.2f} status=BALANCED",
             {
                 "operation": "obligation_status",
                 "obligation.net_payable": net_payable,
@@ -82,7 +82,7 @@ class SettlementProcessorService(BaseService):
         reduction_pct = round(random.uniform(60, 90), 1)
         self.emit_log(
             "INFO",
-            f"Netting run complete: {batches} batches, {counterparties} counterparties, {reduction_pct}% obligation reduction",
+            f"[SETTLE] netting_run batches={batches} counterparties={counterparties} reduction_pct={reduction_pct} status=COMPLETE",
             {
                 "operation": "netting_run",
                 "netting.batch_count": batches,

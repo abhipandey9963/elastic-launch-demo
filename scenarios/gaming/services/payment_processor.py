@@ -52,7 +52,7 @@ class PaymentProcessorService(BaseService):
         player_id = f"PLR-{random.randint(100000, 999999)}"
         self.emit_log(
             "INFO",
-            f"Purchase completed: {player_id} bought '{item}' for {amount} {currency} via {provider}",
+            f"[IAP] purchase_ok player={player_id} item={item} amount={amount}{currency} provider={provider} receipt=VALID",
             {
                 "operation": "purchase_processed",
                 "payment.provider": provider,
@@ -70,7 +70,7 @@ class PaymentProcessorService(BaseService):
         balance = random.randint(100, 100000)
         self.emit_log(
             "INFO",
-            f"Ledger check: {player_id} balance {balance} {virtual_currency} — reconciliation OK",
+            f"[IAP] ledger_check player={player_id} balance={balance} currency={virtual_currency} reconciled=true delta=0",
             {
                 "operation": "ledger_check",
                 "ledger.player_id": player_id,
@@ -84,7 +84,7 @@ class PaymentProcessorService(BaseService):
         revenue = round(self._transactions * random.uniform(3.0, 12.0), 2)
         self.emit_log(
             "INFO",
-            f"Revenue summary: {self._transactions} transactions, estimated ${revenue} gross",
+            f"[IAP] summary txn_count={self._transactions} gross_revenue={revenue} failure_rate=0.8% providers=4/4",
             {
                 "operation": "revenue_summary",
                 "summary.transactions": self._transactions,

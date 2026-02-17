@@ -55,7 +55,7 @@ class ModerationEngineService(BaseService):
             self._actions_taken += 1
         self.emit_log(
             "INFO",
-            f"Content scanned by {model}: verdict {verdict} ({category}, confidence {confidence}) in {latency_ms}ms",
+            f"[T&S] content_scan model={model} verdict={verdict} category={category} confidence={confidence} latency={latency_ms}ms",
             {
                 "operation": "content_scanned",
                 "moderation.model": model,
@@ -73,7 +73,7 @@ class ModerationEngineService(BaseService):
         wait_min = random.randint(1, 120)
         self.emit_log(
             "INFO",
-            f"Report processed: {player_id} for '{category}' — resolution: {resolution} (waited {wait_min}min)",
+            f"[T&S] report_processed player={player_id} category={category} resolution={resolution} wait={wait_min}min queue_depth=142",
             {
                 "operation": "report_processed",
                 "report.player_id": player_id,
@@ -86,7 +86,7 @@ class ModerationEngineService(BaseService):
     def _emit_moderation_summary(self) -> None:
         self.emit_log(
             "INFO",
-            f"Moderation summary: {self._actions_taken} enforcement actions taken, models {', '.join(self._model_versions[:2])} active",
+            f"[T&S] summary actions_taken={self._actions_taken} active_models={len(self._model_versions)} fp_rate=1.2% queue_depth=84",
             {
                 "operation": "moderation_summary",
                 "summary.actions_taken": self._actions_taken,

@@ -67,7 +67,7 @@ class PayloadMonitorService(BaseService):
             self.emit_metric(f"payload.{sensor_name}", value, sensor["unit"])
             self.emit_log(
                 "INFO",
-                f"Payload sensor {sensor_name}: {value} {sensor['unit']} — {status}",
+                f"[PLD] sensor={sensor_name} reading={value}{sensor['unit']} nominal={sensor['nominal_min']}-{sensor['nominal_max']}{sensor['unit']} status=NOMINAL",
                 {
                     "payload.sensor": sensor_name,
                     "payload.reading": value,
@@ -80,7 +80,7 @@ class PayloadMonitorService(BaseService):
         # ── Payload health summary ─────────────────────────────
         self.emit_log(
             "INFO",
-            "Payload health check complete — all sensors nominal, satellite ready",
+            f"[PLD] health_check sensors={len(self.PAYLOAD_SENSORS)} failures=0 satellite=READY status=NOMINAL",
             {
                 "operation": "payload_health",
                 "payload.status": "NOMINAL",

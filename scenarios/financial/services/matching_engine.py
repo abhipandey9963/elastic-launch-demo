@@ -53,7 +53,7 @@ class MatchingEngineService(BaseService):
         latency_us = random.randint(5, 80)
         self.emit_log(
             "INFO",
-            f"Trade matched: {instrument} {qty} @ ${price} in {latency_us}us — fill complete",
+            f"[ME] trade_match instrument={instrument} qty={qty} price=${price} latency_us={latency_us} status=FILLED",
             {
                 "operation": "trade_match",
                 "trade.instrument": instrument,
@@ -71,7 +71,7 @@ class MatchingEngineService(BaseService):
         spread_bps = round(random.uniform(0.5, 3.0), 2)
         self.emit_log(
             "INFO",
-            f"Order book {instrument}: {bid_levels} bid levels, {ask_levels} ask levels, spread {spread_bps}bps",
+            f"[ME] book_depth instrument={instrument} bid_levels={bid_levels} ask_levels={ask_levels} spread_bps={spread_bps}",
             {
                 "operation": "book_depth",
                 "book.instrument": instrument,
@@ -85,7 +85,7 @@ class MatchingEngineService(BaseService):
         total_instruments = len(self._instruments)
         self.emit_log(
             "INFO",
-            f"Book snapshot: {total_instruments} instruments active, {self._matches_total} total matches — engine nominal",
+            f"[ME] book_snapshot instruments={total_instruments} total_matches={self._matches_total} status=NOMINAL",
             {
                 "operation": "book_snapshot",
                 "snapshot.instrument_count": total_instruments,

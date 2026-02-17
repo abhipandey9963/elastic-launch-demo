@@ -49,7 +49,7 @@ class NavigationService(BaseService):
         self.emit_metric("navigation.gps.satellites", float(gps_sats), "count")
         self.emit_log(
             "INFO",
-            f"GPS fix: {gps_sats} satellites, drift {gps_drift}ms, confidence {gps_conf}",
+            f"[GNC] gps_fix sv_count={gps_sats} drift={gps_drift}ms confidence={gps_conf} solution=NOMINAL",
             {
                 "nav.system": "gps",
                 "nav.drift_ms": gps_drift,
@@ -67,7 +67,7 @@ class NavigationService(BaseService):
             self.emit_metric(f"navigation.imu.drift_{axis.lower()}", drift, "ms")
             self.emit_log(
                 "INFO",
-                f"IMU {axis}-axis: drift {drift}ms, confidence {conf}",
+                f"[GNC] imu_reading axis={axis} drift={drift}ms confidence={conf} sync=LOCKED status=NOMINAL",
                 {
                     "nav.system": "imu",
                     "nav.drift_ms": drift,
@@ -87,7 +87,7 @@ class NavigationService(BaseService):
         self.emit_metric("navigation.star_tracker.confidence", st_conf, "ratio")
         self.emit_log(
             "INFO",
-            f"Star tracker: {stars} catalog matches, alignment {alignment} arcsec, confidence {st_conf}",
+            f"[GNC] star_tracker catalog_matches={stars} alignment={alignment}arcsec confidence={st_conf} status=NOMINAL",
             {
                 "nav.system": "star_tracker",
                 "nav.drift_ms": alignment * 0.01,  # approx conversion

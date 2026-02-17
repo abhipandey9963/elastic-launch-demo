@@ -38,7 +38,7 @@ class RangeSafetyService(BaseService):
             margin = round(random.uniform(15.0, 95.0), 1)
             self.emit_log(
                 "INFO",
-                f"Safety check {check['name']}: PASS — margin {margin}%",
+                f"[RSO] check={check['name']} margin={margin}% result=PASS status=NOMINAL",
                 {
                     "safety.check": check["name"],
                     "safety.status": "PASS",
@@ -58,7 +58,7 @@ class RangeSafetyService(BaseService):
         self.emit_metric("range_safety.active_radars", float(radar_count), "count")
         self.emit_log(
             "INFO",
-            f"Range safety: {radar_count} radars tracking, quality {track_quality} — all margins nominal",
+            f"[RSO] tracking radars={radar_count} quality={track_quality} corridor=WITHIN status=NOMINAL",
             {
                 "operation": "tracking_status",
                 "safety.radar_count": radar_count,

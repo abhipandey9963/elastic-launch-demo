@@ -52,7 +52,7 @@ class PatientMonitorService(BaseService):
         temp = round(random.uniform(36.2, 38.0), 1)
         self.emit_log(
             "INFO",
-            f"Vitals received: {patient_id} in {unit} HR={hr} SpO2={spo2}% BP={bp_sys}/{bp_dia} T={temp}C",
+            f"[MONITOR] vitals_recorded patient={patient_id} unit={unit} hr={hr} bp={bp_sys}/{bp_dia} spo2={spo2}% temp={temp}C status=NORMAL",
             {
                 "operation": "vital_reading",
                 "vitals.unit": unit,
@@ -71,7 +71,7 @@ class PatientMonitorService(BaseService):
         packet_loss = round(random.uniform(0.0, 0.5), 2)
         self.emit_log(
             "INFO",
-            f"Waveform stream: {unit} {devices_active} devices active, packet loss {packet_loss}%",
+            f"[MONITOR] waveform_stream unit={unit} devices={devices_active} packet_loss={packet_loss}% status=STREAMING",
             {
                 "operation": "waveform_status",
                 "waveform.unit": unit,
@@ -85,7 +85,7 @@ class PatientMonitorService(BaseService):
         online = total_devices - random.randint(0, 5)
         self.emit_log(
             "INFO",
-            f"Device summary: {online}/{total_devices} monitors online across {len(self._units)} units — telemetry nominal",
+            f"[MONITOR] device_summary online={online}/{total_devices} units={len(self._units)} telemetry=NOMINAL",
             {
                 "operation": "device_summary",
                 "devices.total": total_devices,

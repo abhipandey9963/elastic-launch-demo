@@ -53,7 +53,7 @@ class ClinicalAlertsService(BaseService):
         delivery_ms = random.randint(100, 1200)
         self.emit_log(
             "INFO",
-            f"Alert delivered: {alert_type} priority {priority} for {patient_id} in {unit} — {delivery_ms}ms",
+            f"[CDS] alert_delivered type={alert_type} priority={priority} patient={patient_id} unit={unit} delivery_ms={delivery_ms} status=DELIVERED",
             {
                 "operation": "alert_delivery",
                 "alert.type": alert_type,
@@ -72,7 +72,7 @@ class ClinicalAlertsService(BaseService):
         patient_id = f"PT-{random.randint(100000, 999999)}"
         self.emit_log(
             "INFO",
-            f"CDS evaluation: {rules_evaluated} rules checked for {patient_id}, {triggered} triggered in {eval_ms}ms",
+            f"[CDS] rule_eval patient={patient_id} rules_checked={rules_evaluated} triggered={triggered} eval_ms={eval_ms} status=OK",
             {
                 "operation": "rule_evaluation",
                 "cds.rules_evaluated": rules_evaluated,
@@ -87,7 +87,7 @@ class ClinicalAlertsService(BaseService):
         alerts_hour = random.randint(80, 250)
         self.emit_log(
             "INFO",
-            f"CDS summary: {total_rules} active rules, {alerts_hour} alerts/hr, {self._alerts_processed} total processed — engine nominal",
+            f"[CDS] engine_summary active_rules={total_rules} alerts_per_hr={alerts_hour} total_processed={self._alerts_processed} engine=NOMINAL",
             {
                 "operation": "cds_summary",
                 "cds.active_rules": total_rules,

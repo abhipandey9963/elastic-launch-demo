@@ -51,7 +51,7 @@ class ContentDeliveryService(BaseService):
         latency_ms = round(random.uniform(5.0, 80.0), 1)
         self.emit_log(
             "INFO",
-            f"Asset served from {edge}: {asset_type} ({size_mb}MB) in {latency_ms}ms — cache HIT",
+            f"[CDN] asset_served edge={edge} type={asset_type} size={size_mb}MB latency={latency_ms}ms cache=HIT",
             {
                 "operation": "asset_served",
                 "cdn.edge_node": edge,
@@ -68,7 +68,7 @@ class ContentDeliveryService(BaseService):
         cpu_pct = round(random.uniform(15.0, 65.0), 1)
         self.emit_log(
             "INFO",
-            f"Edge node {edge}: {connections} active connections, CPU {cpu_pct}%",
+            f"[CDN] edge_health node={edge} connections={connections} cpu={cpu_pct}% bandwidth_gbps=4.2 evictions=0",
             {
                 "operation": "edge_health",
                 "edge.node": edge,
@@ -80,7 +80,7 @@ class ContentDeliveryService(BaseService):
     def _emit_cdn_summary(self) -> None:
         self.emit_log(
             "INFO",
-            f"CDN summary: {self._assets_served} assets served across {len(self._edge_nodes)} edge nodes",
+            f"[CDN] summary assets_served={self._assets_served} edge_nodes={len(self._edge_nodes)} origin_rps=42 hit_rate=96.2%",
             {
                 "operation": "cdn_summary",
                 "summary.assets_served": self._assets_served,

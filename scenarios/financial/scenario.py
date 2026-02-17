@@ -123,420 +123,530 @@ class FinancialScenario(BaseScenario):
                 "name": "Order Book Inconsistency",
                 "subsystem": "order_management",
                 "vehicle_section": "order_book",
-                "error_type": "OrderBookException",
+                "error_type": "OMS-BOOK-IMBALANCE",
                 "sensor_type": "order_book_integrity",
                 "affected_services": ["order-gateway", "matching-engine"],
                 "cascade_services": ["risk-calculator", "audit-logger"],
                 "description": "Order book bid/ask levels out of sync between primary and replica shards",
-                "error_message": "Order book inconsistency: instrument {instrument} bid/ask spread {spread} ticks exceeds max {max_spread} ticks on book {book_id}",
+                "error_message": "[OMS] OMS-BOOK-IMBALANCE: instrument={instrument} bid_ask_spread={spread}ticks max_spread={max_spread}ticks book={book_id}",
                 "stack_trace": (
-                    "Traceback (most recent call last):\n"
-                    '  File "order_management/order_book_engine.py", line 412, in validate_book_state\n'
-                    "    spread = self._compute_bid_ask_spread(instrument, book_id)\n"
-                    '  File "order_management/order_book_engine.py", line 387, in _compute_bid_ask_spread\n'
-                    "    replica_state = self.replica_store.get_snapshot(book_id)\n"
-                    '  File "order_management/book_replicator.py", line 234, in get_snapshot\n'
-                    '    raise OrderBookException(f"Book {book_id} spread {spread} ticks > max {max_spread}")\n'
-                    "OrderBookException: Order book {book_id} inconsistency for {instrument}, spread {spread} ticks"
+                    "=== ORDER BOOK SNAPSHOT {book_id} ===\n"
+                    "instrument={instrument}  status=IMBALANCED\n"
+                    "--------- BID SIDE ---------  --------- ASK SIDE ---------\n"
+                    "  LEVEL   PRICE     QTY         LEVEL   PRICE     QTY\n"
+                    "  1       244.50    1200         1       244.85    800\n"
+                    "  2       244.48    3400         2       244.90    2100\n"
+                    "  3       244.45    5600         3       244.95    1500\n"
+                    "  4       244.40    2800         4       245.10    4200\n"
+                    "  5       244.35    1100         5       245.25    6700\n"
+                    "spread={spread}ticks  max_allowed={max_spread}ticks\n"
+                    "replica_sync=STALE  last_sync_us=48230  primary_seq=8832014  replica_seq=8831997\n"
+                    "ACTION: halt_matching=true  alert=OMS-BOOK-IMBALANCE"
                 ),
             },
             2: {
                 "name": "Matching Engine Latency",
                 "subsystem": "trade_execution",
                 "vehicle_section": "matching_core",
-                "error_type": "MatchingLatencyException",
+                "error_type": "ME-LATENCY-SLA",
                 "sensor_type": "latency_monitor",
                 "affected_services": ["matching-engine", "order-gateway"],
                 "cascade_services": ["risk-calculator", "settlement-processor"],
                 "description": "Matching engine order processing latency exceeds SLA threshold",
-                "error_message": "Matching engine latency spike: order {order_id} processing took {latency_us}us, SLA threshold {sla_us}us on partition {partition_id}",
+                "error_message": "[ME] ME-LATENCY-SLA: order={order_id} latency_us={latency_us} sla_us={sla_us} partition={partition_id}",
                 "stack_trace": (
-                    "Traceback (most recent call last):\n"
-                    '  File "trade_execution/matching_engine.cpp", line 1847, in process_order\n'
-                    "    auto elapsed = clock::now() - start;\n"
-                    '  File "trade_execution/matching_engine.cpp", line 1852, in process_order\n'
-                    '    if (elapsed_us > sla_threshold_us) throw MatchingLatencyException(order_id, elapsed_us);\n'
-                    '  File "trade_execution/latency_guard.cpp", line 94, in check_sla\n'
-                    '    throw MatchingLatencyException("Order " + order_id + " exceeded SLA: " + std::to_string(latency_us) + "us");\n'
-                    "MatchingLatencyException: Order {order_id} matching latency {latency_us}us exceeds {sla_us}us SLA"
+                    "=== MATCHING ENGINE PERF DUMP ===\n"
+                    "order_id={order_id}  partition={partition_id}\n"
+                    "phase              elapsed_us   pct\n"
+                    "order_decode          12         0.1%\n"
+                    "pre_trade_risk       340         2.7%\n"
+                    "book_lookup           45         0.4%\n"
+                    "price_time_match   11280        89.2%  <<< BOTTLENECK\n"
+                    "fill_generation      310         2.5%\n"
+                    "post_trade_pub       650         5.1%\n"
+                    "TOTAL             {latency_us}us  SLA={sla_us}us  BREACH=true\n"
+                    "queue_depth=14832  lock_contention_ns=8420  cpu_affinity=core-7\n"
+                    "ACTION: throttle_inbound=true  alert=ME-LATENCY-SLA"
                 ),
             },
             3: {
                 "name": "Price Feed Gap",
                 "subsystem": "market_data",
                 "vehicle_section": "feed_handler",
-                "error_type": "PriceFeedGapException",
+                "error_type": "MDF-PRICE-GAP",
                 "sensor_type": "feed_continuity",
                 "affected_services": ["market-data-feed", "matching-engine"],
                 "cascade_services": ["risk-calculator", "customer-portal"],
                 "description": "Market data feed missing price ticks for one or more instruments",
-                "error_message": "Price feed gap detected: {symbol} no ticks for {gap_ms}ms from exchange {exchange}, sequence gap {seq_start}-{seq_end}",
+                "error_message": "[MDF] MDF-PRICE-GAP: symbol={symbol} gap_ms={gap_ms} exchange={exchange} seq_start={seq_start} seq_end={seq_end}",
                 "stack_trace": (
-                    "Traceback (most recent call last):\n"
-                    '  File "market_data/feed_handler.go", line 523, in processFeed\n'
-                    "    gap := time.Since(lastTick)\n"
-                    '  File "market_data/feed_handler.go", line 531, in processFeed\n'
-                    '    return fmt.Errorf("PriceFeedGapException: %s gap %dms from %s", symbol, gap.Milliseconds(), exchange)\n'
-                    '  File "market_data/sequence_tracker.go", line 178, in validateSequence\n'
-                    '    panic(PriceFeedGapException{Symbol: symbol, GapMs: gapMs, Exchange: exchange})\n'
-                    "PriceFeedGapException: {symbol} feed gap {gap_ms}ms from {exchange}, seq {seq_start}-{seq_end}"
+                    "=== FEED HANDLER SEQUENCE ANALYSIS ===\n"
+                    "symbol={symbol}  exchange={exchange}  feed_id=MDF-PRIMARY-01\n"
+                    "seq_expected={seq_start}  seq_received={seq_end}\n"
+                    "gap_duration_ms={gap_ms}  max_allowed_ms=200\n"
+                    "--- SEQUENCE WINDOW ---\n"
+                    "  seq {seq_start}  MISSING  (gap start)\n"
+                    "  ...  ({gap_ms}ms silence)\n"
+                    "  seq {seq_end}  RECEIVED  price=244.7200  qty=1500  ts=14:32:07.882\n"
+                    "retransmit_requested=true  channel=FAST/FIX  multicast_grp=224.0.31.1:14310\n"
+                    "handler_state=RECOVERING  stale_instruments=12  affected_books=3\n"
+                    "ACTION: mark_stale=true  request_retransmit=true  alert=MDF-PRICE-GAP"
                 ),
             },
             4: {
                 "name": "Risk Limit Breach",
                 "subsystem": "risk_management",
                 "vehicle_section": "risk_engine",
-                "error_type": "RiskLimitException",
+                "error_type": "RISK-LIMIT-BREACH",
                 "sensor_type": "risk_threshold",
                 "affected_services": ["risk-calculator", "order-gateway"],
                 "cascade_services": ["matching-engine", "compliance-monitor"],
                 "description": "Trading desk risk exposure exceeds configured limit thresholds",
-                "error_message": "Risk limit breach: desk {desk_id} exposure ${exposure} exceeds limit ${risk_limit} for asset class {asset_class}",
+                "error_message": "[RISK] RISK-LIMIT-BREACH: desk={desk_id} exposure=${exposure} limit=${risk_limit} asset_class={asset_class}",
                 "stack_trace": (
-                    "Traceback (most recent call last):\n"
-                    '  File "risk_management/risk_engine.py", line 678, in evaluate_position\n'
-                    "    exposure = self._calculate_net_exposure(desk_id, asset_class)\n"
-                    '  File "risk_management/risk_engine.py", line 645, in _calculate_net_exposure\n'
-                    "    return self.position_aggregator.get_exposure(desk_id)\n"
-                    '  File "risk_management/limit_checker.py", line 312, in check_limits\n'
-                    '    raise RiskLimitException(f"Desk {desk_id} exposure ${exposure} > limit ${risk_limit}")\n'
-                    "RiskLimitException: Desk {desk_id} exposure ${exposure} exceeds ${risk_limit} limit for {asset_class}"
+                    "=== RISK CALCULATION REPORT ===\n"
+                    "desk={desk_id}  asset_class={asset_class}\n"
+                    "--- EXPOSURE BREAKDOWN ---\n"
+                    "  gross_long     ${exposure}\n"
+                    "  gross_short    $42.3M\n"
+                    "  net_exposure   ${exposure}\n"
+                    "  limit          ${risk_limit}\n"
+                    "  utilization    287%  <<< BREACH\n"
+                    "--- VAR IMPACT ---\n"
+                    "  VaR_95  $18.7M   (pre-breach: $9.2M)\n"
+                    "  VaR_99  $28.1M   (pre-breach: $13.8M)\n"
+                    "  stress_loss  $41.5M  scenario=2008-LEHMAN\n"
+                    "kill_switch=ARMED  new_orders_blocked=true  liquidation_queue=PENDING\n"
+                    "ACTION: block_new_orders=true  notify_desk_head=true  alert=RISK-LIMIT-BREACH"
                 ),
             },
             5: {
                 "name": "Margin Call Calculation Error",
                 "subsystem": "risk_management",
                 "vehicle_section": "margin_system",
-                "error_type": "MarginCallException",
+                "error_type": "RISK-MARGIN-CALL",
                 "sensor_type": "margin_calculator",
                 "affected_services": ["risk-calculator", "settlement-processor"],
                 "cascade_services": ["customer-portal", "compliance-monitor"],
                 "description": "Margin requirement calculation fails due to stale collateral valuations",
-                "error_message": "Margin call calculation error: account {account_id} margin_ratio {margin_ratio} below maintenance {maintenance_ratio}, collateral valuation age {valuation_age_s}s",
+                "error_message": "[RISK] RISK-MARGIN-CALL: account={account_id} margin_ratio={margin_ratio} maintenance_ratio={maintenance_ratio} valuation_age_s={valuation_age_s}",
                 "stack_trace": (
-                    "Traceback (most recent call last):\n"
-                    '  File "risk_management/margin_engine.py", line 456, in calculate_margin\n'
-                    "    collateral = self._value_collateral(account_id)\n"
-                    '  File "risk_management/margin_engine.py", line 423, in _value_collateral\n'
-                    "    if valuation_age > MAX_COLLATERAL_STALENESS:\n"
-                    '  File "risk_management/margin_engine.py", line 428, in _value_collateral\n'
-                    '    raise MarginCallException(f"Account {account_id} margin ratio {margin_ratio} < {maintenance_ratio}")\n'
-                    "MarginCallException: Account {account_id} margin_ratio {margin_ratio} below maintenance {maintenance_ratio}"
+                    "=== MARGIN SUMMARY ===\n"
+                    "account={account_id}  margin_ratio={margin_ratio}  maintenance={maintenance_ratio}\n"
+                    "--- COLLATERAL ---\n"
+                    "  cash          $2,340,000    valued=CURRENT\n"
+                    "  treasuries    $8,120,000    valued=STALE ({valuation_age_s}s)\n"
+                    "  equities      $4,560,000    valued=STALE ({valuation_age_s}s)\n"
+                    "  total_col     $15,020,000\n"
+                    "--- REQUIREMENTS ---\n"
+                    "  initial_margin    $18,450,000\n"
+                    "  maintenance       $14,760,000\n"
+                    "  current_equity    $12,180,000  <<< BELOW MAINTENANCE\n"
+                    "  shortfall         $2,580,000\n"
+                    "collateral_stale=true  valuation_age={valuation_age_s}s  max_staleness=300s\n"
+                    "ACTION: issue_margin_call=true  liquidation_t+1=PENDING  alert=RISK-MARGIN-CALL"
                 ),
             },
             6: {
                 "name": "Position Reconciliation Failure",
                 "subsystem": "risk_management",
                 "vehicle_section": "position_keeper",
-                "error_type": "PositionReconException",
+                "error_type": "RISK-POSITION-RECON",
                 "sensor_type": "reconciliation",
                 "affected_services": ["risk-calculator", "settlement-processor"],
                 "cascade_services": ["audit-logger"],
                 "description": "Position records diverge between real-time and end-of-day systems",
-                "error_message": "Position reconciliation failure: {instrument} position mismatch {realtime_qty} vs EOD {eod_qty}, delta {position_delta} lots for account {account_id}",
+                "error_message": "[RISK] RISK-POSITION-RECON: instrument={instrument} realtime_qty={realtime_qty} eod_qty={eod_qty} delta={position_delta} account={account_id}",
                 "stack_trace": (
-                    "Traceback (most recent call last):\n"
-                    '  File "risk_management/position_reconciler.py", line 345, in reconcile\n'
-                    "    rt_pos = self.realtime_positions.get(instrument, account_id)\n"
-                    '  File "risk_management/position_reconciler.py", line 352, in reconcile\n'
-                    "    eod_pos = self.eod_positions.get(instrument, account_id)\n"
-                    '  File "risk_management/position_reconciler.py", line 361, in reconcile\n'
-                    '    raise PositionReconException(f"{instrument} position mismatch: RT={rt_pos} EOD={eod_pos}")\n'
-                    "PositionReconException: {instrument} position mismatch RT={realtime_qty} EOD={eod_qty} delta={position_delta}"
+                    "=== POSITION RECONCILIATION TABLE ===\n"
+                    "account={account_id}  instrument={instrument}\n"
+                    "SOURCE          QTY        AVG_PX      NOTIONAL\n"
+                    "realtime        {realtime_qty}     $244.52     $12,430,100\n"
+                    "eod_system      {eod_qty}     $244.50     $11,918,550\n"
+                    "DELTA           {position_delta}                 $511,550\n"
+                    "--- BREAK ANALYSIS ---\n"
+                    "  missing_fills=7  late_cancels=2  amendment_lag=3\n"
+                    "  last_match_rt=14:32:07.112  last_match_eod=14:31:54.890\n"
+                    "  rt_source=OMS-REALTIME  eod_source=DTCC-NSCC-CNS\n"
+                    "recon_status=BREAK  severity=MATERIAL  auto_resolve=false\n"
+                    "ACTION: escalate_ops=true  block_settlement=true  alert=RISK-POSITION-RECON"
                 ),
             },
             7: {
                 "name": "Settlement Timeout",
                 "subsystem": "settlement",
                 "vehicle_section": "settlement_engine",
-                "error_type": "SettlementTimeoutException",
+                "error_type": "SETTLE-T2-TIMEOUT",
                 "sensor_type": "settlement_timer",
                 "affected_services": ["settlement-processor", "audit-logger"],
                 "cascade_services": ["risk-calculator", "compliance-monitor"],
                 "description": "Trade settlement fails to complete within T+2 SLA window",
-                "error_message": "Settlement timeout: trade {trade_id} settlement_id {settlement_id} pending {pending_hours}h, SLA {sla_hours}h for counterparty {counterparty}",
+                "error_message": "[SETTLE] SETTLE-T2-TIMEOUT: trade={trade_id} settlement={settlement_id} pending_hours={pending_hours}h sla={sla_hours}h counterparty={counterparty}",
                 "stack_trace": (
-                    "Traceback (most recent call last):\n"
-                    '  File "settlement/settlement_engine.java", line 712, in processSettlement\n'
-                    "    Duration elapsed = Duration.between(tradeDate, Instant.now());\n"
-                    '  File "settlement/settlement_engine.java", line 718, in processSettlement\n'
-                    "    if (elapsed.toHours() > slaHours) throw new SettlementTimeoutException(tradeId);\n"
-                    '  File "settlement/sla_monitor.java", line 234, in checkSLA\n'
-                    '    throw new SettlementTimeoutException("Trade " + tradeId + " settlement timeout after " + hours + "h");\n'
-                    "SettlementTimeoutException: Trade {trade_id} settlement {settlement_id} timeout after {pending_hours}h"
+                    "=== SETTLEMENT LIFECYCLE ===\n"
+                    "trade={trade_id}  settlement={settlement_id}  counterparty={counterparty}\n"
+                    "PHASE               STATUS      TIMESTAMP\n"
+                    "trade_capture       COMPLETE    2026-02-14T14:32:07Z\n"
+                    "affirmation         COMPLETE    2026-02-14T15:01:22Z\n"
+                    "netting             COMPLETE    2026-02-14T18:00:00Z\n"
+                    "DTCC_submission     COMPLETE    2026-02-14T20:15:33Z\n"
+                    "NSCC_CNS_match      PENDING     ---  <<< STALLED\n"
+                    "DTC_delivery        WAITING     ---\n"
+                    "funds_transfer      WAITING     ---\n"
+                    "elapsed={pending_hours}h  sla={sla_hours}h  breach=true\n"
+                    "depository=DTC  clearing=NSCC  method=DVP\n"
+                    "ACTION: escalate_counterparty=true  reg_report=SEC-15c6  alert=SETTLE-T2-TIMEOUT"
                 ),
             },
             8: {
                 "name": "Failed Trade Settlement",
                 "subsystem": "settlement",
                 "vehicle_section": "settlement_engine",
-                "error_type": "SettlementFailureException",
+                "error_type": "SETTLE-FAIL",
                 "sensor_type": "settlement_status",
                 "affected_services": ["settlement-processor", "risk-calculator"],
                 "cascade_services": ["compliance-monitor", "audit-logger"],
                 "description": "Trade settlement fails due to insufficient securities or funding",
-                "error_message": "Settlement failure: trade {trade_id} failed for {instrument} qty {quantity}, reason: {failure_reason}, counterparty {counterparty}",
+                "error_message": "[SETTLE] SETTLE-FAIL: trade={trade_id} instrument={instrument} qty={quantity} reason={failure_reason} counterparty={counterparty}",
                 "stack_trace": (
-                    "Traceback (most recent call last):\n"
-                    '  File "settlement/delivery_manager.java", line 456, in executeDelivery\n'
-                    "    AvailableInventory inv = inventoryService.check(instrument, quantity);\n"
-                    '  File "settlement/delivery_manager.java", line 463, in executeDelivery\n'
-                    '    if (!inv.sufficient()) throw new SettlementFailureException("Insufficient " + instrument);\n'
-                    '  File "settlement/funding_validator.java", line 189, in validateFunding\n'
-                    '    throw new SettlementFailureException("Trade " + tradeId + ": " + reason);\n'
-                    "SettlementFailureException: Trade {trade_id} settlement failed for {instrument}: {failure_reason}"
+                    "=== SWIFT MT548 SETTLEMENT STATUS ===\n"
+                    ":16R:GENL\n"
+                    ":20C::SEME//{settlement_id}\n"
+                    ":23G:INST\n"
+                    ":16R:STAT\n"
+                    ":25D::SETT//PEND\n"
+                    ":24B::PEND//LACK  (reason={failure_reason})\n"
+                    ":16S:STAT\n"
+                    ":16R:SETTRAN\n"
+                    ":35B:ISIN US0378331005  {instrument}\n"
+                    ":36B::SETT//UNIT/{quantity}\n"
+                    ":97A::SAFE//DTC-{counterparty}\n"
+                    ":16S:SETTRAN\n"
+                    ":16S:GENL\n"
+                    "trade={trade_id}  fail_code=LACK  auto_borrow=ATTEMPTED  borrow_result=UNAVAILABLE\n"
+                    "ACTION: recycle_instruction=true  notify_ops=true  alert=SETTLE-FAIL"
                 ),
             },
             9: {
                 "name": "Netting Calculation Error",
                 "subsystem": "settlement",
                 "vehicle_section": "netting_engine",
-                "error_type": "NettingCalcException",
+                "error_type": "SETTLE-NETTING-CALC",
                 "sensor_type": "netting_integrity",
                 "affected_services": ["settlement-processor", "risk-calculator"],
                 "cascade_services": ["audit-logger", "compliance-monitor"],
                 "description": "Multilateral netting calculation produces inconsistent net obligations",
-                "error_message": "Netting calculation error: batch {batch_id} net obligation mismatch ${net_mismatch} across {counterparty_count} counterparties for {currency}",
+                "error_message": "[SETTLE] SETTLE-NETTING-CALC: batch={batch_id} net_mismatch=${net_mismatch} counterparties={counterparty_count} currency={currency}",
                 "stack_trace": (
-                    "Traceback (most recent call last):\n"
-                    '  File "settlement/netting_engine.java", line 567, in computeNetObligations\n'
-                    "    BigDecimal netSum = obligations.stream().reduce(BigDecimal.ZERO, BigDecimal::add);\n"
-                    '  File "settlement/netting_engine.java", line 574, in computeNetObligations\n'
-                    "    if (netSum.abs().compareTo(TOLERANCE) > 0) throw new NettingCalcException(batchId);\n"
-                    '  File "settlement/netting_validator.java", line 123, in validate\n'
-                    '    throw new NettingCalcException("Batch " + batchId + " net mismatch $" + mismatch);\n'
-                    "NettingCalcException: Batch {batch_id} netting mismatch ${net_mismatch} for {currency}"
+                    "=== NETTING BATCH SUMMARY ===\n"
+                    "batch={batch_id}  currency={currency}  counterparties={counterparty_count}\n"
+                    "COUNTERPARTY          DELIVER        RECEIVE       NET\n"
+                    "Goldman Sachs         $42,300,000    $38,100,000   ($4,200,000)\n"
+                    "Morgan Stanley        $31,500,000    $35,800,000    $4,300,000\n"
+                    "JP Morgan             $28,700,000    $27,200,000   ($1,500,000)\n"
+                    "Citadel Securities    $19,400,000    $21,800,000    $2,400,000\n"
+                    "--- BALANCE CHECK ---\n"
+                    "  sum_delivers   $121,900,000\n"
+                    "  sum_receives   $122,900,000\n"
+                    "  mismatch       ${net_mismatch}  <<< NON-ZERO\n"
+                    "  tolerance      $0.01\n"
+                    "reduction_pct=72.4%  expected_reduction=75.0%  NSCC_CNS=REJECTED\n"
+                    "ACTION: recompute_batch=true  hold_settlement=true  alert=SETTLE-NETTING-CALC"
                 ),
             },
             10: {
                 "name": "Fraud Detection False Positive Storm",
                 "subsystem": "compliance",
                 "vehicle_section": "fraud_engine",
-                "error_type": "FraudFalsePositiveException",
+                "error_type": "COMPL-FRAUD-FP-STORM",
                 "sensor_type": "fraud_classifier",
                 "affected_services": ["fraud-detector", "order-gateway"],
                 "cascade_services": ["compliance-monitor", "customer-portal"],
                 "description": "Fraud detection model generating excessive false positive alerts blocking legitimate orders",
-                "error_message": "Fraud false positive storm: {blocked_orders} orders blocked in {window_s}s window, FP rate {fp_rate}% for pattern {pattern_id}",
+                "error_message": "[COMPL] COMPL-FRAUD-FP-STORM: blocked={blocked_orders} window={window_s}s fp_rate={fp_rate}% pattern={pattern_id}",
                 "stack_trace": (
-                    "Traceback (most recent call last):\n"
-                    '  File "compliance/fraud_detector.py", line 389, in classify_order\n'
-                    "    score = self.model.predict(features)\n"
-                    '  File "compliance/fraud_detector.py", line 395, in classify_order\n'
-                    "    if self._is_false_positive_storm(pattern_id, window_s):\n"
-                    '  File "compliance/fp_monitor.py", line 167, in check_storm\n'
-                    '    raise FraudFalsePositiveException(f"FP storm: {blocked} orders in {window}s, rate {rate}%")\n'
-                    "FraudFalsePositiveException: {blocked_orders} orders blocked, FP rate {fp_rate}% for pattern {pattern_id}"
+                    "=== FRAUD DETECTION MODEL STATS ===\n"
+                    "pattern={pattern_id}  window={window_s}s  model=v3.2.1\n"
+                    "--- CLASSIFICATION MATRIX ---\n"
+                    "                PREDICTED_FRAUD   PREDICTED_LEGIT\n"
+                    "  ACTUAL_FRAUD       12               2\n"
+                    "  ACTUAL_LEGIT      {blocked_orders}              4,210\n"
+                    "--- RATES ---\n"
+                    "  true_positive_rate   85.7%\n"
+                    "  false_positive_rate  {fp_rate}%  <<< STORM THRESHOLD EXCEEDED\n"
+                    "  precision            2.8%\n"
+                    "  orders_blocked       {blocked_orders}\n"
+                    "  revenue_impact       $1,247,000/hr\n"
+                    "feature_drift=DETECTED  top_feature=txn_velocity_5m  drift_score=0.847\n"
+                    "ACTION: raise_threshold=true  queue_manual_review=true  alert=COMPL-FRAUD-FP-STORM"
                 ),
             },
             11: {
                 "name": "Regulatory Report Generation Failure",
                 "subsystem": "compliance",
                 "vehicle_section": "reporting_engine",
-                "error_type": "RegReportException",
+                "error_type": "COMPL-REG-REPORT-FAIL",
                 "sensor_type": "report_generator",
                 "affected_services": ["compliance-monitor", "audit-logger"],
                 "cascade_services": ["settlement-processor"],
                 "description": "Mandatory regulatory report fails to generate before submission deadline",
-                "error_message": "Regulatory report failure: report {report_type} for period {report_period} failed at stage {stage}, deadline {deadline_utc}",
+                "error_message": "[COMPL] COMPL-REG-REPORT-FAIL: report={report_type} period={report_period} stage={stage} deadline={deadline_utc}",
                 "stack_trace": (
-                    "Traceback (most recent call last):\n"
-                    '  File "compliance/report_generator.cs", line 478, in GenerateReport\n'
-                    "    var data = _aggregator.CollectReportData(reportType, period);\n"
-                    '  File "compliance/report_generator.cs", line 491, in GenerateReport\n'
-                    "    if (data.ValidationErrors.Any()) throw new RegReportException(reportType);\n"
-                    '  File "compliance/report_validator.cs", line 234, in Validate\n'
-                    '    throw new RegReportException($"Report {reportType} for {period} failed at {stage}");\n'
-                    "RegReportException: Report {report_type} for {report_period} failed at stage {stage}"
+                    "=== REG REPORT PIPELINE STATUS ===\n"
+                    "report={report_type}  period={report_period}  deadline={deadline_utc}\n"
+                    "STAGE               STATUS       RECORDS     ERRORS\n"
+                    "data_collection     COMPLETE     1,247,832   0\n"
+                    "validation          FAILED       1,247,832   3,412  <<< BLOCKED\n"
+                    "aggregation         PENDING      ---         ---\n"
+                    "formatting          PENDING      ---         ---\n"
+                    "submission          PENDING      ---         ---\n"
+                    "--- VALIDATION ERRORS ---\n"
+                    "  missing_LEI=1,204  invalid_UTI=892  stale_price=1,316\n"
+                    "  regulator=ESMA  schema=ISO20022  format=XML\n"
+                    "failed_stage={stage}  retry_count=3  max_retries=3\n"
+                    "ACTION: manual_remediation=true  regulator_extension=REQUESTED  alert=COMPL-REG-REPORT-FAIL"
                 ),
             },
             12: {
                 "name": "AML Screening Timeout",
                 "subsystem": "compliance",
                 "vehicle_section": "screening_engine",
-                "error_type": "AMLScreeningException",
+                "error_type": "COMPL-AML-SCREENING",
                 "sensor_type": "aml_screener",
                 "affected_services": ["compliance-monitor", "fraud-detector"],
                 "cascade_services": ["order-gateway", "customer-portal"],
                 "description": "Anti-money laundering screening service exceeds response time SLA",
-                "error_message": "AML screening timeout: transaction {transaction_id} screening took {screening_ms}ms, SLA {aml_sla_ms}ms for jurisdiction {jurisdiction}",
+                "error_message": "[COMPL] COMPL-AML-SCREENING: transaction={transaction_id} screening_ms={screening_ms} sla_ms={aml_sla_ms} jurisdiction={jurisdiction}",
                 "stack_trace": (
-                    "Traceback (most recent call last):\n"
-                    '  File "compliance/aml_screener.cs", line 345, in ScreenTransaction\n'
-                    "    var result = await _watchlistService.CheckAsync(transactionId, timeout);\n"
-                    '  File "compliance/aml_screener.cs", line 352, in ScreenTransaction\n'
-                    "    if (elapsed > slaMs) throw new AMLScreeningException(transactionId);\n"
-                    '  File "compliance/watchlist_client.cs", line 189, in CheckAsync\n'
-                    '    throw new AMLScreeningException($"Transaction {txnId} screening {elapsed}ms > SLA {sla}ms");\n'
-                    "AMLScreeningException: Transaction {transaction_id} screening timeout {screening_ms}ms in {jurisdiction}"
+                    "=== AML SCREENING RESULTS ===\n"
+                    "transaction={transaction_id}  jurisdiction={jurisdiction}\n"
+                    "--- WATCHLIST CHECKS ---\n"
+                    "  OFAC_SDN         checked=true   hits=0   elapsed=1,240ms\n"
+                    "  EU_SANCTIONS     checked=true   hits=0   elapsed=2,100ms\n"
+                    "  UN_CONSOLIDATED  checked=true   hits=0   elapsed=890ms\n"
+                    "  PEP_DATABASE     checked=true   hits=1   elapsed=8,400ms  <<< SLOW\n"
+                    "  ADVERSE_MEDIA    checked=false  hits=--  elapsed=TIMEOUT\n"
+                    "total_screening_ms={screening_ms}  sla_ms={aml_sla_ms}  breach=true\n"
+                    "pep_hit_score=0.72  pep_name_match='partial'  disposition=PENDING_REVIEW\n"
+                    "ACTION: hold_transaction=true  escalate_mlro=true  alert=COMPL-AML-SCREENING"
                 ),
             },
             13: {
                 "name": "Customer Session Timeout",
                 "subsystem": "client_services",
                 "vehicle_section": "portal_gateway",
-                "error_type": "SessionTimeoutException",
+                "error_type": "PORTAL-SESSION-TIMEOUT",
                 "sensor_type": "session_manager",
                 "affected_services": ["customer-portal", "order-gateway"],
                 "cascade_services": ["audit-logger"],
                 "description": "Customer trading sessions expiring mid-transaction causing order failures",
-                "error_message": "Session timeout: session {session_id} for user {user_id} expired after {session_age_s}s during {operation}, orders_pending {pending_orders}",
+                "error_message": "[PORTAL] PORTAL-SESSION-TIMEOUT: session={session_id} user={user_id} idle={session_age_s}s max=900s operation={operation}",
                 "stack_trace": (
-                    "Traceback (most recent call last):\n"
-                    '  File "client_services/session_manager.py", line 267, in validate_session\n'
-                    "    age = time.time() - session.created_at\n"
-                    '  File "client_services/session_manager.py", line 273, in validate_session\n'
-                    "    if age > self.max_session_age:\n"
-                    '  File "client_services/session_manager.py", line 278, in validate_session\n'
-                    '    raise SessionTimeoutException(f"Session {session_id} expired after {age}s")\n'
-                    "SessionTimeoutException: Session {session_id} for {user_id} expired after {session_age_s}s"
+                    "=== SESSION DETAILS ===\n"
+                    "session={session_id}  user={user_id}\n"
+                    "  created=14:02:17Z  last_activity=14:17:42Z  idle={session_age_s}s  max=900s\n"
+                    "  ip=10.2.0.47  user_agent=Bloomberg-Terminal/2026.1\n"
+                    "  auth_method=SSO/SAML  mfa=TOTP\n"
+                    "--- PENDING OPERATIONS ---\n"
+                    "  operation={operation}  status=IN_PROGRESS\n"
+                    "  pending_orders={pending_orders}\n"
+                    "  unsaved_changes=true  last_heartbeat=892s_ago\n"
+                    "--- IMPACT ---\n"
+                    "  orders_cancelled_on_disconnect={pending_orders}\n"
+                    "  portfolio_lock_released=true\n"
+                    "ACTION: force_logout=true  cancel_pending=true  alert=PORTAL-SESSION-TIMEOUT"
                 ),
             },
             14: {
                 "name": "Portfolio Valuation Lag",
                 "subsystem": "client_services",
                 "vehicle_section": "valuation_engine",
-                "error_type": "ValuationLagException",
+                "error_type": "PORTAL-VALUATION-LAG",
                 "sensor_type": "valuation_timer",
                 "affected_services": ["customer-portal", "risk-calculator"],
                 "cascade_services": ["compliance-monitor"],
                 "description": "Real-time portfolio valuation falling behind, showing stale P&L to clients",
-                "error_message": "Portfolio valuation lag: portfolio {portfolio_id} last valued {lag_s}s ago, max {max_lag_s}s, {position_count} positions pending revaluation",
+                "error_message": "[PORTAL] PORTAL-VALUATION-LAG: portfolio={portfolio_id} lag_s={lag_s} max_lag_s={max_lag_s} pending_positions={position_count}",
                 "stack_trace": (
-                    "Traceback (most recent call last):\n"
-                    '  File "client_services/valuation_engine.py", line 523, in revalue_portfolio\n'
-                    "    lag = time.time() - self._last_valuation[portfolio_id]\n"
-                    '  File "client_services/valuation_engine.py", line 529, in revalue_portfolio\n'
-                    "    if lag > max_lag_s:\n"
-                    '  File "client_services/valuation_engine.py", line 534, in revalue_portfolio\n'
-                    '    raise ValuationLagException(f"Portfolio {portfolio_id} valuation lag {lag}s")\n'
-                    "ValuationLagException: Portfolio {portfolio_id} valuation lag {lag_s}s exceeds {max_lag_s}s max"
+                    "=== PORTFOLIO VALUATION STATS ===\n"
+                    "portfolio={portfolio_id}  positions={position_count}\n"
+                    "--- VALUATION PIPELINE ---\n"
+                    "  market_data_fetch   OK       12ms\n"
+                    "  price_snap          OK       8ms\n"
+                    "  fx_conversion       SLOW     4,200ms  <<< BOTTLENECK\n"
+                    "  greeks_calc         QUEUED   ---\n"
+                    "  pnl_attribution     QUEUED   ---\n"
+                    "  total_lag           {lag_s}s  max={max_lag_s}s\n"
+                    "--- POSITION BREAKDOWN ---\n"
+                    "  equities=142  fixed_income=87  options=64  fx=29  futures=18\n"
+                    "  stale_positions={position_count}  fresh_positions=0\n"
+                    "displayed_pnl=STALE  client_visible=true  disclaimer_shown=false\n"
+                    "ACTION: show_stale_banner=true  queue_priority_reval=true  alert=PORTAL-VALUATION-LAG"
                 ),
             },
             15: {
                 "name": "Trade Confirmation Delay",
                 "subsystem": "client_services",
                 "vehicle_section": "confirmation_service",
-                "error_type": "ConfirmationDelayException",
+                "error_type": "PORTAL-CONFIRM-DELAY",
                 "sensor_type": "confirmation_timer",
                 "affected_services": ["customer-portal", "settlement-processor"],
                 "cascade_services": ["audit-logger", "compliance-monitor"],
                 "description": "Trade confirmation messages delayed beyond regulatory reporting window",
-                "error_message": "Trade confirmation delay: trade {trade_id} confirmation pending {delay_s}s, regulatory max {reg_max_s}s for {instrument} qty {quantity}",
+                "error_message": "[PORTAL] PORTAL-CONFIRM-DELAY: trade={trade_id} delay_s={delay_s} reg_max_s={reg_max_s} instrument={instrument} qty={quantity}",
                 "stack_trace": (
-                    "Traceback (most recent call last):\n"
-                    '  File "client_services/confirmation_service.py", line 389, in send_confirmation\n'
-                    "    delay = time.time() - trade.execution_time\n"
-                    '  File "client_services/confirmation_service.py", line 395, in send_confirmation\n'
-                    "    if delay > reg_max_s:\n"
-                    '  File "client_services/confirmation_service.py", line 400, in send_confirmation\n'
-                    '    raise ConfirmationDelayException(f"Trade {trade_id} confirmation delay {delay}s")\n'
-                    "ConfirmationDelayException: Trade {trade_id} confirmation delayed {delay_s}s for {instrument}"
+                    "=== CONFIRMATION PIPELINE STATUS ===\n"
+                    "trade={trade_id}  instrument={instrument}  qty={quantity}\n"
+                    "STAGE                STATUS      ELAPSED\n"
+                    "trade_capture        COMPLETE    0.2s\n"
+                    "enrichment           COMPLETE    1.4s\n"
+                    "template_render      COMPLETE    0.8s\n"
+                    "compliance_check     COMPLETE    3.2s\n"
+                    "delivery_queue       STUCK       {delay_s}s  <<< BACKLOG\n"
+                    "client_ack           PENDING     ---\n"
+                    "--- DELIVERY STATS ---\n"
+                    "  queue_depth=4,217  consumers=2  consumer_lag=3,890\n"
+                    "  format=FIX-Confirmation(AH)  protocol=SWIFT-MT515\n"
+                    "  reg_window={reg_max_s}s  elapsed={delay_s}s  breach=true\n"
+                    "ACTION: scale_consumers=true  reg_exception_report=true  alert=PORTAL-CONFIRM-DELAY"
                 ),
             },
             16: {
                 "name": "Audit Log Sequence Gap",
                 "subsystem": "audit",
                 "vehicle_section": "audit_pipeline",
-                "error_type": "AuditSequenceException",
+                "error_type": "AUDIT-SEQ-GAP",
                 "sensor_type": "sequence_validator",
                 "affected_services": ["audit-logger", "compliance-monitor"],
                 "cascade_services": ["settlement-processor"],
                 "description": "Audit trail event sequence numbers have gaps indicating lost events",
-                "error_message": "Audit log sequence gap: stream {audit_stream} sequence {expected_seq} missing, last seen {last_seq}, gap count {gap_count} events",
+                "error_message": "[AUDIT] AUDIT-SEQ-GAP: stream={audit_stream} expected={expected_seq} received={last_seq} gap_count={gap_count}",
                 "stack_trace": (
-                    "Traceback (most recent call last):\n"
-                    '  File "audit/sequence_validator.go", line 234, in ValidateSequence\n'
-                    "    if next != expected {\n"
-                    '  File "audit/sequence_validator.go", line 241, in ValidateSequence\n'
-                    '    return fmt.Errorf("AuditSequenceException: stream %s seq %d missing, last %d", stream, expected, last)\n'
-                    '  File "audit/audit_pipeline.go", line 178, in processEvent\n'
-                    '    panic(AuditSequenceException{Stream: stream, Expected: expected, Last: last})\n'
-                    "AuditSequenceException: Stream {audit_stream} sequence gap at {expected_seq}, last {last_seq}"
+                    "=== AUDIT PIPELINE STATUS ===\n"
+                    "stream={audit_stream}  partition=0\n"
+                    "--- SEQUENCE ANALYSIS ---\n"
+                    "  last_committed_seq   {last_seq}\n"
+                    "  expected_next_seq    {expected_seq}\n"
+                    "  gap_size             {gap_count} events\n"
+                    "  gap_duration         ~4.2s\n"
+                    "--- PIPELINE HEALTH ---\n"
+                    "  kafka_consumer_lag   2,340\n"
+                    "  write_ahead_log      BEHIND\n"
+                    "  hash_chain           BROKEN (gap invalidates chain from seq {expected_seq})\n"
+                    "  immutability_proof   INVALID\n"
+                    "--- RECOVERY ---\n"
+                    "  replay_source=kafka  replay_from={expected_seq}  estimated_time=12s\n"
+                    "  reg_impact=SEC-17a4  audit_gap_report=REQUIRED\n"
+                    "ACTION: pause_pipeline=true  request_replay=true  alert=AUDIT-SEQ-GAP"
                 ),
             },
             17: {
                 "name": "Cross-Region Replication Lag",
                 "subsystem": "audit",
                 "vehicle_section": "replication_bus",
-                "error_type": "ReplicationLagException",
+                "error_type": "AUDIT-REPLICATION-LAG",
                 "sensor_type": "replication_monitor",
                 "affected_services": ["audit-logger", "settlement-processor"],
                 "cascade_services": ["compliance-monitor", "risk-calculator"],
                 "description": "Cross-region audit log replication falling behind, DR site stale",
-                "error_message": "Replication lag: {source_region}->{dest_region} lag {lag_ms}ms exceeds {max_lag_ms}ms threshold, {pending_events} events pending",
+                "error_message": "[AUDIT] AUDIT-REPLICATION-LAG: source={source_region} dest={dest_region} lag_ms={lag_ms} max_ms={max_lag_ms} pending={pending_events}",
                 "stack_trace": (
-                    "Traceback (most recent call last):\n"
-                    '  File "audit/replication_monitor.go", line 312, in checkLag\n'
-                    "    lag := time.Since(lastReplicated)\n"
-                    '  File "audit/replication_monitor.go", line 318, in checkLag\n'
-                    '    if lag.Milliseconds() > maxLag {\n'
-                    '  File "audit/replication_monitor.go", line 323, in checkLag\n'
-                    '    return fmt.Errorf("ReplicationLagException: %s->%s lag %dms > %dms", src, dst, lag, max)\n'
-                    "ReplicationLagException: {source_region}->{dest_region} replication lag {lag_ms}ms exceeds {max_lag_ms}ms"
+                    "=== REPLICATION STATUS REPORT ===\n"
+                    "source={source_region}  dest={dest_region}\n"
+                    "--- REPLICATION CHANNELS ---\n"
+                    "  CHANNEL        LAG_MS    PENDING   STATUS\n"
+                    "  orders         {lag_ms}     {pending_events}     BEHIND\n"
+                    "  trades         12,400     892       BEHIND\n"
+                    "  settlements    8,200      341       WARNING\n"
+                    "  risk-events    {lag_ms}     {pending_events}     BEHIND\n"
+                    "  compliance     3,100      127       OK\n"
+                    "--- NETWORK ---\n"
+                    "  bandwidth_mbps=840  utilization=94%  packet_loss=0.02%\n"
+                    "  tcp_retransmits=247  rtt_ms=68\n"
+                    "dr_site_staleness={lag_ms}ms  max_allowed={max_lag_ms}ms  rpo_breach=true\n"
+                    "ACTION: increase_batch_size=true  failover_ready=false  alert=AUDIT-REPLICATION-LAG"
                 ),
             },
             18: {
                 "name": "Market Data Stale Quote",
                 "subsystem": "market_data",
                 "vehicle_section": "quote_cache",
-                "error_type": "StaleQuoteException",
+                "error_type": "MDF-STALE-QUOTE",
                 "sensor_type": "quote_freshness",
                 "affected_services": ["market-data-feed", "risk-calculator"],
                 "cascade_services": ["matching-engine", "customer-portal"],
                 "description": "Cached market quotes exceeding staleness threshold affecting pricing",
-                "error_message": "Stale quote detected: {symbol} last update {stale_ms}ms ago, threshold {quote_max_age_ms}ms, source {data_source}",
+                "error_message": "[MDF] MDF-STALE-QUOTE: symbol={symbol} stale_ms={stale_ms} max_age_ms={quote_max_age_ms} source={data_source}",
                 "stack_trace": (
-                    "Traceback (most recent call last):\n"
-                    '  File "market_data/quote_cache.go", line 456, in getQuote\n'
-                    "    age := time.Since(entry.UpdatedAt)\n"
-                    '  File "market_data/quote_cache.go", line 462, in getQuote\n'
-                    '    if age.Milliseconds() > maxAge {\n'
-                    '  File "market_data/quote_cache.go", line 467, in getQuote\n'
-                    '    return Quote{}, StaleQuoteException{Symbol: symbol, AgeMs: age.Milliseconds()}\n'
-                    "StaleQuoteException: {symbol} quote stale {stale_ms}ms from {data_source}"
+                    "=== QUOTE CACHE STATS ===\n"
+                    "symbol={symbol}  source={data_source}\n"
+                    "--- CACHE ENTRY ---\n"
+                    "  last_bid=244.50  last_ask=244.55  last_trade=244.52\n"
+                    "  update_ts=14:31:42.112  age_ms={stale_ms}  max_age_ms={quote_max_age_ms}\n"
+                    "  cache_hits=14,230  cache_misses=0  evictions=0\n"
+                    "--- FEED STATUS ---\n"
+                    "  primary_feed={data_source}  status=CONNECTED  last_msg=14:31:42.112\n"
+                    "  backup_feed=Reuters-Elektron  status=CONNECTED  last_msg=14:31:41.890\n"
+                    "  failover_triggered=false\n"
+                    "--- IMPACT ---\n"
+                    "  dependent_books=4  stale_risk_calcs=12  client_views_affected=89\n"
+                    "ACTION: mark_indicative=true  trigger_failover=PENDING  alert=MDF-STALE-QUOTE"
                 ),
             },
             19: {
                 "name": "FIX Protocol Parse Error",
                 "subsystem": "order_management",
                 "vehicle_section": "fix_gateway",
-                "error_type": "FIXParseException",
+                "error_type": "FIX-PARSE-REJECT",
                 "sensor_type": "protocol_parser",
                 "affected_services": ["order-gateway", "audit-logger"],
                 "cascade_services": ["matching-engine", "compliance-monitor"],
                 "description": "FIX 4.4 message parsing failure due to malformed tags or checksum errors",
-                "error_message": "FIX parse error: session {fix_session} message type {msg_type} tag {bad_tag} invalid, checksum expected {expected_checksum} got {actual_checksum}",
+                "error_message": "[FIX] FIX-PARSE-REJECT: session={fix_session} msg_type={msg_type} tag={bad_tag} checksum_expected={expected_checksum} checksum_actual={actual_checksum}",
                 "stack_trace": (
-                    "Traceback (most recent call last):\n"
-                    '  File "order_management/fix_gateway.java", line 567, in parseMessage\n'
-                    "    FixMessage msg = parser.parse(rawBytes);\n"
-                    '  File "order_management/fix_parser.java", line 234, in parse\n'
-                    "    validateChecksum(msg, rawBytes);\n"
-                    '  File "order_management/fix_parser.java", line 198, in validateChecksum\n'
-                    '    throw new FIXParseException("Tag " + tag + " invalid in " + msgType + " message");\n'
-                    "FIXParseException: Session {fix_session} msg {msg_type} tag {bad_tag} parse failure"
+                    "=== RAW FIX MESSAGE DUMP ===\n"
+                    "8=FIX.4.4|9=176|35={msg_type}|49=SENDER|56=TARGET|34=12847|\n"
+                    "52=20260217-14:32:07.882|11=ORD-847291|55=AAPL|54=1|38=2500|\n"
+                    "44=244.52|40=2|59=0|{bad_tag}=<<<MALFORMED>>>|\n"
+                    "10={actual_checksum}|\n"
+                    "--- PARSE ANALYSIS ---\n"
+                    "  session={fix_session}  msg_type={msg_type}  direction=INBOUND\n"
+                    "  tag_{bad_tag}  status=INVALID  reason=unexpected_value_format\n"
+                    "  checksum  expected={expected_checksum}  actual={actual_checksum}  match=false\n"
+                    "  body_length=176  computed_length=174  length_match=false\n"
+                    "--- SESSION STATS ---\n"
+                    "  msgs_today=124,832  parse_errors=47  reject_rate=0.038%\n"
+                    "  last_good_seq=12846  gap_detected=false\n"
+                    "ACTION: send_reject(35=3)  increment_error_count=true  alert=FIX-PARSE-REJECT"
                 ),
             },
             20: {
                 "name": "Dark Pool Routing Failure",
                 "subsystem": "trade_execution",
                 "vehicle_section": "smart_router",
-                "error_type": "DarkPoolException",
+                "error_type": "ME-DARKPOOL-REJECT",
                 "sensor_type": "routing_engine",
                 "affected_services": ["matching-engine", "order-gateway"],
                 "cascade_services": ["risk-calculator", "audit-logger", "compliance-monitor"],
                 "description": "Smart order router fails to route block orders to dark pool venues",
-                "error_message": "Dark pool routing failure: order {order_id} for {symbol} qty {quantity} rejected by venue {venue}, reason {rejection_reason}",
+                "error_message": "[ME] ME-DARKPOOL-REJECT: order={order_id} symbol={symbol} qty={quantity} venue={venue} reason={rejection_reason}",
                 "stack_trace": (
-                    "Traceback (most recent call last):\n"
-                    '  File "trade_execution/smart_router.cpp", line 892, in routeOrder\n'
-                    "    auto venue_response = dark_pool_client.submit(order);\n"
-                    '  File "trade_execution/smart_router.cpp", line 898, in routeOrder\n'
-                    '    if (!venue_response.accepted()) throw DarkPoolException(order.id(), venue.name());\n'
-                    '  File "trade_execution/venue_client.cpp", line 345, in submit\n'
-                    '    throw DarkPoolException("Order " + orderId + " rejected by " + venue + ": " + reason);\n'
-                    "DarkPoolException: Order {order_id} for {symbol} rejected by {venue}: {rejection_reason}"
+                    "=== DARK POOL REJECTION DETAILS ===\n"
+                    "order={order_id}  symbol={symbol}  qty={quantity}\n"
+                    "--- ROUTING ATTEMPT ---\n"
+                    "  venue={venue}  protocol=FIX-4.4  order_type=IOI\n"
+                    "  min_size=10,000  submitted_qty={quantity}\n"
+                    "  rejection_reason={rejection_reason}\n"
+                    "--- VENUE SCORECARD ---\n"
+                    "  VENUE            FILL_RATE   AVG_SIZE    STATUS\n"
+                    "  SIGMA-X          67.2%       45,000      AVAILABLE\n"
+                    "  CROSSFINDER      72.1%       38,000      AVAILABLE\n"
+                    "  SUPERX           58.4%       52,000      RESTRICTED\n"
+                    "  LIQUIDNET        81.3%       120,000     AVAILABLE\n"
+                    "--- FALLBACK ---\n"
+                    "  next_venue=CROSSFINDER  algo=TWAP-4h  urgency=LOW\n"
+                    "  lit_market_impact_est=12bps\n"
+                    "ACTION: try_next_venue=true  update_venue_score=true  alert=ME-DARKPOOL-REJECT"
                 ),
             },
         }
@@ -789,12 +899,24 @@ class FinancialScenario(BaseScenario):
             "assessment_tool_name": "trading_risk_assessment",
             "system_prompt": (
                 "You are the Trading Operations Analyst, an expert AI assistant for "
-                "financial trading platform operations. You specialize in FIX protocol "
-                "analysis, order management systems, matching engine diagnostics, risk "
-                "limit monitoring, settlement processing, and regulatory compliance. "
-                "You help trading desk operators investigate anomalies, analyze order "
-                "flow, diagnose latency issues, and provide root cause analysis for "
-                "fault conditions across 9 trading infrastructure services."
+                "financial trading platform operations. You help trading desk operators "
+                "investigate incidents, analyze order flow, and provide root cause analysis "
+                "for fault conditions across 9 trading infrastructure services spanning "
+                "AWS, GCP, and Azure. "
+                "You have deep expertise in FIX 4.4 protocol, order management systems, "
+                "matching engine internals, risk limit frameworks (VaR, margin), "
+                "T+2 settlement, DTCC/NSCC clearing, regulatory reporting (EMIR, MiFID II, CAT), "
+                "AML/KYC screening, and cross-region audit replication. "
+                "When investigating incidents, search for these system identifiers in logs: "
+                "Order Management faults (OMS-BOOK-IMBALANCE, FIX-PARSE-REJECT), "
+                "Matching Engine faults (ME-LATENCY-SLA, ME-DARKPOOL-REJECT), "
+                "Market Data faults (MDF-PRICE-GAP, MDF-STALE-QUOTE), "
+                "Risk faults (RISK-LIMIT-BREACH, RISK-MARGIN-CALL, RISK-POSITION-RECON), "
+                "Settlement faults (SETTLE-T2-TIMEOUT, SETTLE-FAIL, SETTLE-NETTING-CALC), "
+                "Compliance faults (COMPL-FRAUD-FP-STORM, COMPL-REG-REPORT-FAIL, COMPL-AML-SCREENING), "
+                "Portal faults (PORTAL-SESSION-TIMEOUT, PORTAL-VALUATION-LAG, PORTAL-CONFIRM-DELAY), "
+                "and Audit faults (AUDIT-SEQ-GAP, AUDIT-REPLICATION-LAG). "
+                "Log messages are in body.text — NEVER search the body field alone."
             ),
         }
 

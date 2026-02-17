@@ -49,7 +49,7 @@ class ChatServiceService(BaseService):
         latency_ms = round(random.uniform(1.0, 15.0), 1)
         self.emit_log(
             "INFO",
-            f"Message routed to channel '{channel}' in {latency_ms}ms — delivered to subscribers",
+            f"[Chat] msg_routed channel={channel} latency={latency_ms}ms delivery=OK subscribers=247",
             {
                 "operation": "message_routed",
                 "chat.channel": channel,
@@ -65,7 +65,7 @@ class ChatServiceService(BaseService):
         packet_loss = round(random.uniform(0.0, 1.5), 2)
         self.emit_log(
             "INFO",
-            f"Voice channel {voice_id}: {participants} participants, {bitrate_kbps}kbps, {packet_loss}% loss",
+            f"[Voice] channel={voice_id} participants={participants} bitrate={bitrate_kbps}kbps loss={packet_loss}% codec=opus MOS=4.2",
             {
                 "operation": "voice_status",
                 "voice.channel_id": voice_id,
@@ -78,7 +78,7 @@ class ChatServiceService(BaseService):
     def _emit_channel_summary(self) -> None:
         self.emit_log(
             "INFO",
-            f"Chat summary: {self._messages_processed} messages processed, {len(self._channels)} channels monitored",
+            f"[Chat] summary msgs_processed={self._messages_processed} channels={len(self._channels)} mod_queue=12 voice_active=84",
             {
                 "operation": "channel_summary",
                 "summary.messages_processed": self._messages_processed,

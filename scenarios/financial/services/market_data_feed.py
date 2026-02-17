@@ -57,7 +57,7 @@ class MarketDataFeedService(BaseService):
         price = round(random.uniform(100.0, 500.0), 4)
         self.emit_log(
             "INFO",
-            f"Tick processed: {symbol} @ ${price} from {feed} — latency {latency_us}us",
+            f"[MDF] tick_processed symbol={symbol} price=${price} feed={feed} exchange={feed_info['exchange']} latency_us={latency_us}",
             {
                 "operation": "tick_process",
                 "tick.symbol": symbol,
@@ -73,7 +73,7 @@ class MarketDataFeedService(BaseService):
         gap_count = random.randint(0, 2)
         self.emit_log(
             "INFO",
-            f"Feed health: {feed} — {gap_count} gaps in last 60s, feed status CONNECTED",
+            f"[MDF] feed_health feed={feed} gaps_60s={gap_count} status=CONNECTED",
             {
                 "operation": "feed_health",
                 "feed.name": feed,
@@ -86,7 +86,7 @@ class MarketDataFeedService(BaseService):
         active_feeds = len(self.FEEDS)
         self.emit_log(
             "INFO",
-            f"Feed summary: {active_feeds} feeds active, {self._ticks_processed} total ticks — all feeds nominal",
+            f"[MDF] feed_summary active_feeds={active_feeds} total_ticks={self._ticks_processed} status=NOMINAL",
             {
                 "operation": "feed_summary",
                 "summary.active_feeds": active_feeds,

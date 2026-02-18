@@ -74,36 +74,6 @@ async def lifespan(app: FastAPI):
             logger.exception("Failed to restore deployment %s", rec["deployment_id"])
             store.set_status(rec["deployment_id"], "error")
 
-    # If no deployments were restored, start a default instance from env
-    if len(registry) == 0:
-        try:
-            from app.chaos.controller import ChaosController
-            from app.dashboard.websocket import DashboardWebSocket
-            from app.services.manager import ServiceManager
-
-            chaos_controller = ChaosController()
-            dashboard_ws = DashboardWebSocket()
-            service_manager = ServiceManager(chaos_controller, dashboard_ws)
-            service_manager.start_all()
-            # Wrap in a lightweight instance for registry consistency
-            from app.instance import ScenarioInstance as _SI
-            from app.context import ScenarioContext as _SC
-            scenario = get_scenario(ACTIVE_SCENARIO)
-            ctx = _SC.from_scenario(scenario)
-            inst = _SI.__new__(_SI)
-            inst.ctx = ctx
-            inst.scenario_id = ACTIVE_SCENARIO
-            inst.deployment_id = ACTIVE_SCENARIO
-            inst.otlp = service_manager.otlp
-            inst.chaos_controller = chaos_controller
-            inst.dashboard_ws = dashboard_ws
-            inst.service_manager = service_manager
-            inst._running = True
-            registry.register(ACTIVE_SCENARIO, inst)
-            logger.info("%s online — default instance started", MISSION_NAME)
-        except Exception:
-            logger.exception("Failed to start default instance")
-
     yield
 
     registry.stop_all()

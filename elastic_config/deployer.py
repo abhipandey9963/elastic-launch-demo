@@ -495,9 +495,8 @@ class ScenarioDeployer:
         agent_cfg = self.scenario.agent_config
         agent_id = agent_cfg.get("id", f"{ns}-analyst")
 
-        # Read template YAMLs from elastic-config/workflows/ and substitute
-        wf_dir = os.path.join(os.path.dirname(__file__), "..", "elastic-config", "workflows")
-        wf_dir = os.path.normpath(wf_dir)
+        # Read template YAMLs from elastic_config/workflows/ and substitute
+        wf_dir = os.path.join(os.path.dirname(__file__), "workflows")
 
         workflows = {}
         if os.path.isdir(wf_dir):
@@ -1152,13 +1151,7 @@ When the user asks you to fix or remediate this issue, use remediation_action to
 
         try:
             # Generate scenario-specific dashboard NDJSON dynamically
-            import sys
-            gen_dir = os.path.normpath(os.path.join(
-                os.path.dirname(__file__), "..", "elastic-config", "dashboards",
-            ))
-            if gen_dir not in sys.path:
-                sys.path.insert(0, gen_dir)
-            from generate_exec_dashboard import generate_dashboard_ndjson
+            from elastic_config.dashboards.generate_exec_dashboard import generate_dashboard_ndjson
 
             ndjson_str = generate_dashboard_ndjson(self.scenario)
 

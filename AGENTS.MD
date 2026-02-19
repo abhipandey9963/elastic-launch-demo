@@ -597,7 +597,7 @@ Terms columns should include `missingBucket` and `otherBucket` params:
 The working OTel panels do NOT include `"description": null` or `"savedObjectId": null`. Omit these entirely rather than setting to null.
 
 ### Generator Script
-Use `elastic-config/dashboards/generate_exec_dashboard.py` to regenerate the NDJSON — it produces correct Kibana 9.4 format with random UUIDs for layer/column IDs.
+Use `elastic_config/dashboards/generate_exec_dashboard.py` to regenerate the NDJSON — it produces correct Kibana 9.4 format with random UUIDs for layer/column IDs.
 
 ---
 

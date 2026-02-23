@@ -105,14 +105,15 @@ class ScenarioDeployer:
             DeployStep("Connectivity check"),           # 0
             DeployStep("Derive OTLP endpoint"),         # 1
             DeployStep("Clean up old artifacts"),       # 2
-            DeployStep("Deploy workflows", items_total=3),  # 3
-            DeployStep("Index knowledge base", items_total=20),  # 4
-            DeployStep("Deploy AI agent tools", items_total=7),  # 5
-            DeployStep("Create AI agent"),              # 6
-            DeployStep("Create significant events", items_total=20),  # 7
-            DeployStep("Create data views"),            # 8
-            DeployStep("Import executive dashboard"),   # 9
-            DeployStep("Create alert rules", items_total=20),  # 10
+            DeployStep("Configure platform settings"),  # 3
+            DeployStep("Deploy workflows", items_total=3),  # 4
+            DeployStep("Index knowledge base", items_total=20),  # 5
+            DeployStep("Deploy AI agent tools", items_total=7),  # 6
+            DeployStep("Create AI agent"),              # 7
+            DeployStep("Create significant events", items_total=20),  # 8
+            DeployStep("Create data views"),            # 9
+            DeployStep("Import executive dashboard"),   # 10
+            DeployStep("Create alert rules", items_total=20),  # 11
         ])
         _notify = callback or (lambda p: None)
         _notify(self.progress)
@@ -122,6 +123,7 @@ class ScenarioDeployer:
                 self._check_connectivity(client, _notify)
                 self._derive_otlp_step(client, _notify)
                 self._cleanup_all_scenarios_step(client, _notify)
+                self._configure_platform_settings(client, _notify)
                 self._deploy_workflows(client, _notify)
                 self._deploy_knowledge_base(client, _notify)
                 self._deploy_tools(client, _notify)
@@ -448,10 +450,74 @@ class ScenarioDeployer:
         except Exception:
             return False
 
+    # ── Platform Settings ──────────────────────────────────────────────
+
+    def _configure_platform_settings(self, client: httpx.Client, notify: ProgressCallback):
+        """Enable wired streams, significant events, and agent builder."""
+        step = self._step(3)
+        step.status = "running"
+        notify(self.progress)
+
+        configured = []
+        errors = []
+
+        # 1. Enable wired streams
+        try:
+            resp = client.post(
+                f"{self.kibana_url}/api/streams/_enable",
+                headers=_kibana_headers(self.api_key),
+                json={},
+            )
+            if resp.status_code < 300:
+                configured.append("wired streams")
+            else:
+                errors.append(f"wired streams (HTTP {resp.status_code})")
+        except Exception as exc:
+            errors.append(f"wired streams ({exc})")
+
+        # 2. Enable significant events
+        try:
+            resp = client.post(
+                f"{self.kibana_url}/internal/kibana/settings",
+                headers=_kibana_headers(self.api_key),
+                json={"changes": {"observability:streamsEnableSignificantEvents": True}},
+            )
+            if resp.status_code < 300:
+                configured.append("significant events")
+            else:
+                errors.append(f"significant events (HTTP {resp.status_code})")
+        except Exception as exc:
+            errors.append(f"significant events ({exc})")
+
+        # 3. Enable agent builder as preferred chat experience
+        try:
+            resp = client.post(
+                f"{self.kibana_url}/internal/kibana/settings",
+                headers=_kibana_headers(self.api_key),
+                json={"changes": {"aiAssistant:preferredChatExperience": "agent"}},
+            )
+            if resp.status_code < 300:
+                configured.append("agent builder")
+            else:
+                errors.append(f"agent builder (HTTP {resp.status_code})")
+        except Exception as exc:
+            errors.append(f"agent builder ({exc})")
+
+        if configured:
+            step.status = "ok"
+            step.detail = f"Enabled: {', '.join(configured)}"
+            if errors:
+                step.detail += f"; failed: {', '.join(errors)}"
+        else:
+            step.status = "failed"
+            step.detail = f"Failed: {', '.join(errors)}"
+
+        notify(self.progress)
+
     # ── Workflows ──────────────────────────────────────────────────────
 
     def _deploy_workflows(self, client: httpx.Client, notify: ProgressCallback):
-        step = self._step(3)
+        step = self._step(4)
         step.status = "running"
         notify(self.progress)
 
@@ -742,7 +808,7 @@ steps:
     # ── Tools ──────────────────────────────────────────────────────────
 
     def _deploy_tools(self, client: httpx.Client, notify: ProgressCallback):
-        step = self._step(5)
+        step = self._step(6)
         step.status = "running"
         notify(self.progress)
 
@@ -800,7 +866,7 @@ steps:
     # ── Agent ──────────────────────────────────────────────────────────
 
     def _deploy_agent(self, client: httpx.Client, notify: ProgressCallback):
-        step = self._step(6)
+        step = self._step(7)
         step.status = "running"
         notify(self.progress)
 
@@ -927,7 +993,7 @@ Do NOT write custom ES|QL queries. Use the parameterized tools.
     # ── Knowledge Base ─────────────────────────────────────────────────
 
     def _deploy_knowledge_base(self, client: httpx.Client, notify: ProgressCallback):
-        step = self._step(4)
+        step = self._step(5)
         step.status = "running"
         notify(self.progress)
 
@@ -1045,18 +1111,11 @@ When the user asks you to fix or remediate this issue, use remediation_action to
     # ── Significant Events ─────────────────────────────────────────────
 
     def _deploy_significant_events(self, client: httpx.Client, notify: ProgressCallback):
-        step = self._step(7)
+        step = self._step(8)
         step.status = "running"
         notify(self.progress)
 
-        # Enable streams
-        client.post(
-            f"{self.kibana_url}/api/streams/_enable",
-            headers=_kibana_headers(self.api_key),
-            json={},
-        )
-
-        # Clean existing queries
+        # Clean existing queries (streams already enabled in _configure_platform_settings)
         self._cleanup_significant_events(client)
 
         # Build bulk operations
@@ -1094,7 +1153,7 @@ When the user asks you to fix or remediate this issue, use remediation_action to
     # ── Data Views ─────────────────────────────────────────────────────
 
     def _deploy_data_views(self, client: httpx.Client, notify: ProgressCallback):
-        step = self._step(8)
+        step = self._step(9)
         step.status = "running"
         notify(self.progress)
 
@@ -1145,7 +1204,7 @@ When the user asks you to fix or remediate this issue, use remediation_action to
     # ── Dashboard ──────────────────────────────────────────────────────
 
     def _deploy_dashboard(self, client: httpx.Client, notify: ProgressCallback):
-        step = self._step(9)
+        step = self._step(10)
         step.status = "running"
         notify(self.progress)
 
@@ -1184,7 +1243,7 @@ When the user asks you to fix or remediate this issue, use remediation_action to
     # ── Alerting ───────────────────────────────────────────────────────
 
     def _deploy_alerting(self, client: httpx.Client, notify: ProgressCallback):
-        step = self._step(10)
+        step = self._step(11)
         step.status = "running"
         notify(self.progress)
 

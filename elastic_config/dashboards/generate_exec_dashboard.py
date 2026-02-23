@@ -33,6 +33,9 @@ Layout (48-unit grid): Cloud -> RED -> USE -> APM/Infra -> Detail
     y=86  h=2:  Section header
     y=88  h=12: Errors by Service bar, Service Health Heatmap
     y=100 h=12: Node CPU Over Time by cluster, Pod Memory by service
+  Section 6 — Significant Event Logs (y=112..128):
+    y=112 h=2:  Section header
+    y=114 h=14: Significant Event Logs datatable (trace.id, span.id, service)
 """
 
 import json
@@ -964,6 +967,44 @@ def _build_dashboard_ndjson(
     panels.append(make_panel("p25",
         {"h": 12, "i": "p25", "w": 24, "x": 24, "y": 100},
         "Pod Memory by Service", "lnsXY", state, [make_ref(DATA_VIEW_ID_METRICS, lid)]))
+
+    # ── Section 6 (y=112): Significant Event Logs ───────────────────────────
+
+    panels.append({
+        "type": "DASHBOARD_MARKDOWN",
+        "embeddableConfig": {
+            "content": "**Significant Event Logs** Trace-correlated error logs",
+        },
+        "panelIndex": "p_se_label",
+        "gridData": {"h": 2, "i": "p_se_label", "w": 48, "x": 0, "y": 112},
+    })
+
+    # p26: Significant Event Logs (datatable with trace.id and span.id)
+    lid = uid()
+    cid_trace = uid()
+    cid_span = uid()
+    cid_svc = uid()
+    cid_count = uid()
+    columns = {
+        cid_trace: col_terms("trace.id", "Trace ID", size=25, order_col_id=cid_count),
+        cid_span: col_terms("span.id", "Span ID", size=5, order_col_id=cid_count),
+        cid_svc: col_terms("service.name", "Service", size=10, order_col_id=cid_count),
+        cid_count: col_count(label="Error Count"),
+    }
+    layer = make_layer(lid, [cid_trace, cid_span, cid_svc, cid_count], columns, DATA_VIEW_ID_LOGS)
+    state = make_state(layer, {
+        "layerId": lid,
+        "layerType": "data",
+        "columns": [
+            {"columnId": cid_trace, "isTransposed": False},
+            {"columnId": cid_span, "isTransposed": False},
+            {"columnId": cid_svc, "isTransposed": False},
+            {"columnId": cid_count, "isTransposed": False},
+        ],
+    }, query='severity_text: "ERROR"')
+    panels.append(make_panel("p26",
+        {"h": 14, "i": "p26", "w": 48, "x": 0, "y": 114},
+        "Significant Event Logs", "lnsDatatable", state, [make_ref(DATA_VIEW_ID_LOGS, lid)]))
 
     # ── Collect all references from panels ───────────────────────────────────
 

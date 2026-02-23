@@ -38,7 +38,144 @@ SCRAPERS = {
     "filesystem": f"{SCRAPER_BASE}/filesystemscraper",
     "network": f"{SCRAPER_BASE}/networkscraper",
     "processes": f"{SCRAPER_BASE}/processesscraper",
+    "process": f"{SCRAPER_BASE}/processscraper",
 }
+
+# ── Per-process templates ─────────────────────────────────────────────────────
+# Realistic processes running on a K8s node.  Each host gets its own set with
+# unique PIDs derived from pid_base + host index offset.
+PROCESS_TEMPLATES = [
+    {
+        "executable.name": "systemd",
+        "executable.path": "/usr/lib/systemd/systemd",
+        "command": "systemd",
+        "command_line": "/usr/lib/systemd/systemd --switched-root --system --deserialize 22",
+        "owner": "root",
+        "pid_base": 1,
+        "cpu_weight": 0.02,
+        "mem_bytes_range": (10_000_000, 30_000_000),
+        "virtual_bytes_range": (100_000_000, 200_000_000),
+        "threads_range": (1, 3),
+        "fd_range": (50, 150),
+    },
+    {
+        "executable.name": "containerd",
+        "executable.path": "/usr/bin/containerd",
+        "command": "containerd",
+        "command_line": "/usr/bin/containerd",
+        "owner": "root",
+        "pid_base": 512,
+        "cpu_weight": 0.08,
+        "mem_bytes_range": (80_000_000, 200_000_000),
+        "virtual_bytes_range": (1_000_000_000, 2_000_000_000),
+        "threads_range": (20, 50),
+        "fd_range": (200, 500),
+    },
+    {
+        "executable.name": "kubelet",
+        "executable.path": "/usr/bin/kubelet",
+        "command": "kubelet",
+        "command_line": "/usr/bin/kubelet --config=/var/lib/kubelet/config.yaml --kubeconfig=/etc/kubernetes/kubelet.conf",
+        "owner": "root",
+        "pid_base": 1024,
+        "cpu_weight": 0.12,
+        "mem_bytes_range": (100_000_000, 300_000_000),
+        "virtual_bytes_range": (1_500_000_000, 3_000_000_000),
+        "threads_range": (15, 40),
+        "fd_range": (300, 800),
+    },
+    {
+        "executable.name": "kube-proxy",
+        "executable.path": "/usr/bin/kube-proxy",
+        "command": "kube-proxy",
+        "command_line": "/usr/bin/kube-proxy --config=/var/lib/kube-proxy/config.conf",
+        "owner": "root",
+        "pid_base": 1200,
+        "cpu_weight": 0.03,
+        "mem_bytes_range": (20_000_000, 60_000_000),
+        "virtual_bytes_range": (500_000_000, 1_000_000_000),
+        "threads_range": (5, 12),
+        "fd_range": (30, 100),
+    },
+    {
+        "executable.name": "python3",
+        "executable.path": "/usr/bin/python3",
+        "command": "python3",
+        "command_line": "python3 -m uvicorn app.main:app --host 0.0.0.0 --port 80",
+        "owner": "app",
+        "pid_base": 2048,
+        "cpu_weight": 0.15,
+        "mem_bytes_range": (120_000_000, 350_000_000),
+        "virtual_bytes_range": (800_000_000, 1_500_000_000),
+        "threads_range": (4, 12),
+        "fd_range": (60, 200),
+    },
+    {
+        "executable.name": "java",
+        "executable.path": "/usr/bin/java",
+        "command": "java",
+        "command_line": "java -Xmx512m -jar /opt/service/service.jar",
+        "owner": "app",
+        "pid_base": 3000,
+        "cpu_weight": 0.20,
+        "mem_bytes_range": (200_000_000, 550_000_000),
+        "virtual_bytes_range": (2_000_000_000, 4_000_000_000),
+        "threads_range": (30, 80),
+        "fd_range": (150, 400),
+    },
+    {
+        "executable.name": "nginx",
+        "executable.path": "/usr/sbin/nginx",
+        "command": "nginx",
+        "command_line": "nginx: worker process",
+        "owner": "www-data",
+        "pid_base": 4000,
+        "cpu_weight": 0.06,
+        "mem_bytes_range": (15_000_000, 80_000_000),
+        "virtual_bytes_range": (300_000_000, 600_000_000),
+        "threads_range": (1, 4),
+        "fd_range": (100, 500),
+    },
+    {
+        "executable.name": "otelcol",
+        "executable.path": "/usr/bin/otelcol-contrib",
+        "command": "otelcol-contrib",
+        "command_line": "/usr/bin/otelcol-contrib --config=/etc/otelcol/config.yaml",
+        "owner": "otel",
+        "pid_base": 5000,
+        "cpu_weight": 0.05,
+        "mem_bytes_range": (60_000_000, 150_000_000),
+        "virtual_bytes_range": (700_000_000, 1_200_000_000),
+        "threads_range": (8, 20),
+        "fd_range": (50, 200),
+    },
+    {
+        "executable.name": "sshd",
+        "executable.path": "/usr/sbin/sshd",
+        "command": "sshd",
+        "command_line": "sshd: /usr/sbin/sshd -D",
+        "owner": "root",
+        "pid_base": 800,
+        "cpu_weight": 0.01,
+        "mem_bytes_range": (5_000_000, 15_000_000),
+        "virtual_bytes_range": (80_000_000, 150_000_000),
+        "threads_range": (1, 2),
+        "fd_range": (10, 30),
+    },
+    {
+        "executable.name": "node",
+        "executable.path": "/usr/bin/node",
+        "command": "node",
+        "command_line": "node /opt/monitoring/index.js",
+        "owner": "monitor",
+        "pid_base": 6000,
+        "cpu_weight": 0.04,
+        "mem_bytes_range": (40_000_000, 120_000_000),
+        "virtual_bytes_range": (500_000_000, 1_000_000_000),
+        "threads_range": (6, 14),
+        "fd_range": (30, 100),
+    },
+]
 
 # ── Host definitions from active scenario ─────────────────────────────────────
 def _load_hosts():
@@ -146,6 +283,35 @@ class HostMetricState:
         self.net_errors_recv += rng.randint(0, 1)
         self.net_errors_send += rng.randint(0, 1)
         self.processes_created += rng.randint(1, 10)
+
+
+class ProcessState:
+    """Tracks per-process cumulative counters."""
+
+    def __init__(self, template: dict, host_index: int, rng: random.Random):
+        self.template = template
+        self.pid = template["pid_base"] + host_index * 100
+        self._rng = rng
+        w = template["cpu_weight"]
+        # Cumulative CPU time (seconds)
+        self.cpu_time_user = rng.uniform(100, 5000) * w
+        self.cpu_time_system = rng.uniform(50, 2000) * w
+        # Cumulative disk I/O (bytes)
+        self.disk_read = rng.uniform(1e6, 1e9) * w
+        self.disk_write = rng.uniform(1e6, 1e9) * w
+        # Cumulative context switches
+        self.ctx_voluntary = rng.randint(10000, 500000)
+        self.ctx_involuntary = rng.randint(1000, 50000)
+
+    def tick(self):
+        rng = self._rng
+        w = self.template["cpu_weight"]
+        self.cpu_time_user += rng.uniform(0.05, 2.0) * w
+        self.cpu_time_system += rng.uniform(0.02, 0.8) * w
+        self.disk_read += rng.randint(0, 500000) * w
+        self.disk_write += rng.randint(0, 1000000) * w
+        self.ctx_voluntary += rng.randint(1, 100)
+        self.ctx_involuntary += rng.randint(0, 20)
 
 
 def _build_sum_metric(name: str, value, unit: str, attributes: dict | None = None, is_int: bool = False) -> dict:
@@ -397,6 +563,137 @@ def _send_metrics_with_scopes(client: OTLPClient, resource: dict, metrics_by_sco
     return total
 
 
+# ── Per-process metrics ──────────────────────────────────────────────────────
+
+def _build_process_resource(host_cfg: dict, proc_state: ProcessState) -> dict:
+    """Build OTLP resource for an individual process (host attrs + process attrs)."""
+    t = proc_state.template
+    attrs = {}
+    # Carry over host identification attributes
+    for key in [
+        "host.name", "host.id", "host.arch",
+        "os.type", "os.description",
+        "cloud.provider", "cloud.region",
+    ]:
+        if key in host_cfg:
+            attrs[key] = host_cfg[key]
+
+    # Process-specific resource attributes
+    attrs["process.pid"] = proc_state.pid
+    attrs["process.executable.name"] = t["executable.name"]
+    attrs["process.executable.path"] = t["executable.path"]
+    attrs["process.command"] = t["command"]
+    attrs["process.command_line"] = t["command_line"]
+    attrs["process.owner"] = t["owner"]
+    attrs["process.parent_pid"] = 1 if proc_state.pid != 1 else 0
+
+    attrs["telemetry.sdk.name"] = "opentelemetry"
+    attrs["telemetry.sdk.version"] = "1.24.0"
+    attrs["telemetry.sdk.language"] = "python"
+
+    return {
+        "attributes": _format_attributes(attrs),
+        "schemaUrl": SCHEMA_URL,
+    }
+
+
+def _generate_process_metrics(proc_state: ProcessState, rng: random.Random) -> list[dict]:
+    """Generate OTel process.* metrics for a single process."""
+    proc_state.tick()
+    t = proc_state.template
+    metrics = []
+
+    # process.cpu.time — cumulative seconds by state (user, system)
+    metrics.append(_build_sum_metric(
+        "process.cpu.time", proc_state.cpu_time_user, "s",
+        attributes={"state": "user"},
+    ))
+    metrics.append(_build_sum_metric(
+        "process.cpu.time", proc_state.cpu_time_system, "s",
+        attributes={"state": "system"},
+    ))
+
+    # process.cpu.utilization — instantaneous ratio (0..1)
+    cpu_util = t["cpu_weight"] * rng.uniform(0.3, 1.5)
+    cpu_util = min(cpu_util, 1.0)
+    metrics.append(_build_gauge_metric("process.cpu.utilization", cpu_util, "1"))
+
+    # process.memory.usage — resident memory (bytes)
+    lo, hi = t["mem_bytes_range"]
+    metrics.append(_build_gauge_metric(
+        "process.memory.usage", rng.randint(lo, hi), "By", is_int=True,
+    ))
+
+    # process.memory.virtual — virtual memory size (bytes)
+    lo, hi = t["virtual_bytes_range"]
+    metrics.append(_build_gauge_metric(
+        "process.memory.virtual", rng.randint(lo, hi), "By", is_int=True,
+    ))
+
+    # process.threads — thread count
+    lo, hi = t["threads_range"]
+    metrics.append(_build_gauge_metric(
+        "process.threads", rng.randint(lo, hi), "{thread}", is_int=True,
+    ))
+
+    # process.open_file_descriptors — open FD count
+    lo, hi = t["fd_range"]
+    metrics.append(_build_gauge_metric(
+        "process.open_file_descriptors", rng.randint(lo, hi), "{count}", is_int=True,
+    ))
+
+    # process.disk.io — cumulative bytes by direction
+    metrics.append(_build_sum_metric(
+        "process.disk.io", proc_state.disk_read, "By",
+        attributes={"direction": "read"},
+    ))
+    metrics.append(_build_sum_metric(
+        "process.disk.io", proc_state.disk_write, "By",
+        attributes={"direction": "write"},
+    ))
+
+    # process.context_switches — cumulative by type
+    metrics.append(_build_sum_metric(
+        "process.context_switches", proc_state.ctx_voluntary, "{count}",
+        attributes={"type": "voluntary"}, is_int=True,
+    ))
+    metrics.append(_build_sum_metric(
+        "process.context_switches", proc_state.ctx_involuntary, "{count}",
+        attributes={"type": "involuntary"}, is_int=True,
+    ))
+
+    return metrics
+
+
+def _send_process_metrics(
+    client: OTLPClient,
+    host_cfg: dict,
+    proc_states: list[ProcessState],
+    rng: random.Random,
+) -> int:
+    """Generate and send per-process metrics for one host. Returns metric count."""
+    scope_name = SCRAPERS["process"]
+    resource_metrics = []
+    total = 0
+
+    for ps in proc_states:
+        metrics = _generate_process_metrics(ps, rng)
+        resource_metrics.append({
+            "resource": _build_process_resource(host_cfg, ps),
+            "scopeMetrics": [{
+                "scope": {"name": scope_name, "version": "0.115.0"},
+                "metrics": metrics,
+            }],
+        })
+        total += len(metrics)
+
+    if resource_metrics:
+        payload = {"resourceMetrics": resource_metrics}
+        client._send(f"{client.endpoint}/v1/metrics", payload, "metrics")
+
+    return total
+
+
 # ── Run loop (used by ServiceManager and standalone) ──────────────────────────
 def run(client: OTLPClient, stop_event: threading.Event, scenario_data: dict | None = None) -> None:
     """Run host metrics generator loop until stop_event is set."""
@@ -407,7 +704,8 @@ def run(client: OTLPClient, stop_event: threading.Event, scenario_data: dict | N
     # Build resources and metric state for each host
     host_resources = []
     host_states = []
-    for host_cfg in hosts:
+    host_proc_states: list[list[ProcessState]] = []
+    for host_idx, host_cfg in enumerate(hosts):
         resource = _build_host_resource(host_cfg)
         state = HostMetricState(
             cpu_count=host_cfg["cpu_count"],
@@ -417,25 +715,34 @@ def run(client: OTLPClient, stop_event: threading.Event, scenario_data: dict | N
         )
         host_resources.append(resource)
         host_states.append(state)
+        # Per-process states for this host
+        proc_states = [ProcessState(t, host_idx, rng) for t in PROCESS_TEMPLATES]
+        host_proc_states.append(proc_states)
 
     total_metrics = 0
     scrape_count = 0
+    proc_count = len(PROCESS_TEMPLATES) * len(hosts)
 
-    logger.info("Host metrics generator started (interval=%ds, hosts=%d)",
-                METRICS_INTERVAL, len(hosts))
+    logger.info("Host metrics generator started (interval=%ds, hosts=%d, processes=%d)",
+                METRICS_INTERVAL, len(hosts), proc_count)
 
     while not stop_event.is_set():
         batch_metrics = 0
-        for resource, state in zip(host_resources, host_states):
+        for host_cfg, resource, state, proc_states in zip(
+            hosts, host_resources, host_states, host_proc_states,
+        ):
             metrics_by_scope = _generate_host_metrics(state, rng)
             sent = _send_metrics_with_scopes(client, resource, metrics_by_scope)
+            batch_metrics += sent
+            # Per-process metrics
+            sent = _send_process_metrics(client, host_cfg, proc_states, rng)
             batch_metrics += sent
 
         scrape_count += 1
         total_metrics += batch_metrics
         logger.info(
-            "Scrape %d: sent %d metrics across %d hosts (total=%d)",
-            scrape_count, batch_metrics, len(hosts), total_metrics,
+            "Scrape %d: sent %d metrics across %d hosts + %d processes (total=%d)",
+            scrape_count, batch_metrics, len(hosts), proc_count, total_metrics,
         )
 
         stop_event.wait(METRICS_INTERVAL)

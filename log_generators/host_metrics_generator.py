@@ -520,6 +520,22 @@ def _generate_host_metrics(state: HostMetricState, rng: random.Random) -> dict[s
             "system.network.errors", state.net_errors_send, "{error}",
             attributes={"device": device, "direction": "transmit"}, is_int=True,
         ))
+    # network.connections — TCP connection count by state (OTel dashboard panel)
+    tcp_states = {
+        "ESTABLISHED": rng.randint(40, 200),
+        "TIME_WAIT": rng.randint(5, 50),
+        "CLOSE_WAIT": rng.randint(0, 10),
+        "LISTEN": rng.randint(10, 30),
+        "SYN_SENT": rng.randint(0, 3),
+        "SYN_RECV": rng.randint(0, 3),
+        "FIN_WAIT1": rng.randint(0, 5),
+        "FIN_WAIT2": rng.randint(0, 5),
+    }
+    for tcp_state, count in tcp_states.items():
+        net_metrics.append(_build_gauge_metric(
+            "system.network.connections", count, "{connection}",
+            attributes={"protocol": "tcp", "state": tcp_state}, is_int=True,
+        ))
     metrics_by_scope[SCRAPERS["network"]] = net_metrics
 
     # ── Process metrics ──

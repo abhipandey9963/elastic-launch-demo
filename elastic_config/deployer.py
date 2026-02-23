@@ -1196,6 +1196,16 @@ When the user asks you to fix or remediate this issue, use remediation_action to
                 },
                 "override": True,
             },
+            # Required by [OTel] Host Details dashboards
+            {
+                "data_view": {
+                    "id": "metrics-hostmetricsreceiver.otel-*",
+                    "title": "metrics-hostmetricsreceiver.otel-*",
+                    "name": "metrics-hostmetricsreceiver.otel-*",
+                    "timeFieldName": "@timestamp",
+                },
+                "override": True,
+            },
         ]
 
         created = 0

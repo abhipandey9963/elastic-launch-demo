@@ -503,6 +503,20 @@ class ScenarioDeployer:
         except Exception as exc:
             errors.append(f"agent builder ({exc})")
 
+        # 4. Enable workflows UI
+        try:
+            resp = client.post(
+                f"{self.kibana_url}/internal/kibana/settings",
+                headers=_kibana_headers(self.api_key),
+                json={"changes": {"workflows:ui:enabled": True}},
+            )
+            if resp.status_code < 300:
+                configured.append("workflows UI")
+            else:
+                errors.append(f"workflows UI (HTTP {resp.status_code})")
+        except Exception as exc:
+            errors.append(f"workflows UI ({exc})")
+
         if configured:
             step.status = "ok"
             step.detail = f"Enabled: {', '.join(configured)}"

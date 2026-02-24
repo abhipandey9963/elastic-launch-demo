@@ -202,11 +202,11 @@ async def landing_page(deployment_id: Optional[str] = None):
 
 
 @app.get("/slides", response_class=HTMLResponse)
-async def slides_page():
+async def slides_page(deployment_id: Optional[str] = None):
     path = os.path.join(_base, "landing", "static", "slides.html")
     with open(path) as f:
         html = f.read()
-    return HTMLResponse(content=html)
+    return HTMLResponse(content=_inject_theme(html, deployment_id))
 
 
 # ── Health ──────────────────────────────────────────────────────────────────

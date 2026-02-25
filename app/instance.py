@@ -11,6 +11,7 @@ import logging
 import threading
 
 from app.chaos.controller import ChaosController
+from app.chaos.remediation_poller import RemediationPoller
 from app.context import ScenarioContext
 from app.dashboard.websocket import DashboardWebSocket
 from app.services.manager import ServiceManager
@@ -47,6 +48,18 @@ class ScenarioInstance:
             otlp_client=self.otlp,
         )
 
+        # Remediation poller — only if ES credentials are available
+        self.remediation_poller: RemediationPoller | None = None
+        if ctx.elastic_url and ctx.elastic_api_key:
+            self.remediation_poller = RemediationPoller(
+                elastic_url=ctx.elastic_url,
+                elastic_api_key=ctx.elastic_api_key,
+                namespace=ctx.namespace,
+                chaos_controller=self.chaos_controller,
+                dashboard_ws=self.dashboard_ws,
+                stop_event=self.service_manager._stop_event,
+            )
+
         self._running = False
 
     @property
@@ -59,6 +72,8 @@ class ScenarioInstance:
             logger.warning("Instance %s already running", self.scenario_id)
             return
         self.service_manager.start_all()
+        if self.remediation_poller:
+            self.remediation_poller.start()
         self._running = True
         logger.info("Instance %s started (%d services)", self.scenario_id,
                      len(self.service_manager.services))

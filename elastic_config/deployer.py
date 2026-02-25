@@ -715,6 +715,29 @@ steps:
     with:
       message: "Remediation QUEUED for channel {{{{ inputs.channel }}}}. Backend will process shortly."
 
+  - name: find_open_case
+    type: kibana.request
+    with:
+      method: GET
+      path: "/api/cases/_find?tags={ns}&tags={{{{ inputs.error_type }}}}&status=open&sortField=createdAt&sortOrder=desc&perPage=1&owner=observability"
+
+  - name: close_case
+    type: if
+    condition: "steps.find_open_case.output.cases.0.id : *"
+    steps:
+      - name: update_case_closed
+        type: kibana.updateCase
+        with:
+          cases:
+            - id: "{{{{ steps.find_open_case.output.cases[0].id }}}}"
+              version: "{{{{ steps.find_open_case.output.cases[0].version }}}}"
+              status: "closed"
+
+  - name: log_case_closed
+    type: console
+    with:
+      message: "Case closed for {{{{ inputs.error_type }}}} (channel {{{{ inputs.channel }}}})."
+
   - name: audit_log
     type: elasticsearch.index
     with:
@@ -726,6 +749,7 @@ steps:
         justification: "{{{{ inputs.justification }}}}"
         dry_run: "{{{{ inputs.dry_run }}}}"
         status: "resolved"
+        case_closed: true
         mission_id: "{scenario_name}"
       refresh: wait_for
 """

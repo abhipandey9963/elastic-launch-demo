@@ -265,6 +265,78 @@ def col_formula(formula, label):
     }
 
 
+def make_metric_palette(thresholds):
+    """Create a custom color palette for lnsMetric threshold-based coloring.
+
+    Args:
+        thresholds: list of (color, upper_bound) tuples defining ranges.
+            The last upper_bound should be a large sentinel value.
+            Example: [("#54B399", 5), ("#D6BF57", 15), ("#E7664C", 9999)]
+            Means: green for 0-5, yellow for 5-15, red for 15+
+    """
+    stops = [{"color": color, "stop": stop} for color, stop in thresholds]
+    color_stops = [{"color": thresholds[0][0], "stop": 0}]
+    for i in range(1, len(thresholds)):
+        color_stops.append({"color": thresholds[i][0], "stop": thresholds[i - 1][1]})
+
+    return {
+        "name": "custom",
+        "type": "palette",
+        "params": {
+            "steps": len(thresholds),
+            "name": "custom",
+            "reverse": False,
+            "rangeType": "number",
+            "rangeMin": 0,
+            "rangeMax": None,
+            "progression": "fixed",
+            "stops": stops,
+            "colorStops": color_stops,
+            "continuity": "above",
+            "maxSteps": 5,
+        },
+    }
+
+
+# ── Threshold palettes for metric tiles ───────────────────────────────────────
+# Green → Yellow → Red as values climb
+PALETTE_ERRORS = make_metric_palette([
+    ("#54B399", 5),     # green: 0-5 errors
+    ("#D6BF57", 15),    # yellow: 5-15 errors
+    ("#E7664C", 9999),  # red: 15+ errors
+])
+
+PALETTE_ERROR_RATE = make_metric_palette([
+    ("#54B399", 0.05),  # green: 0-5%
+    ("#D6BF57", 0.10),  # yellow: 5-10%
+    ("#E7664C", 1.0),   # red: 10%+
+])
+
+PALETTE_THROUGHPUT = make_metric_palette([
+    ("#54B399", 2000),  # green: normal
+    ("#D6BF57", 3500),  # yellow: elevated
+    ("#E7664C", 99999), # red: spike
+])
+
+PALETTE_LATENCY_P99 = make_metric_palette([
+    ("#54B399", 1_000_000_000),   # green: < 1s
+    ("#D6BF57", 10_000_000_000),  # yellow: 1-10s
+    ("#E7664C", 999_000_000_000), # red: > 10s
+])
+
+PALETTE_LATENCY_P50 = make_metric_palette([
+    ("#54B399", 500_000_000),     # green: < 500ms
+    ("#D6BF57", 2_000_000_000),   # yellow: 500ms-2s
+    ("#E7664C", 999_000_000_000), # red: > 2s
+])
+
+PALETTE_CPU = make_metric_palette([
+    ("#54B399", 0.60),  # green: < 60%
+    ("#D6BF57", 0.80),  # yellow: 60-80%
+    ("#E7664C", 1.0),   # red: > 80%
+])
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Main generation function
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -344,7 +416,7 @@ def _build_dashboard_ndjson(
                 "layerId": lid,
                 "layerType": "data",
                 "metricAccessor": cid,
-                "color": "#54B399",
+                "palette": PALETTE_ERRORS,
                 "subtitle": svc_name,
             })
             x = group["x_start"] + svc_offset * TILE_WIDTH
@@ -366,38 +438,41 @@ def _build_dashboard_ndjson(
         left_w = col_w // 2
         right_w = col_w - left_w
 
-        # Node CPU tile (left half of column)
+        # Node CPU tile (left half of column) — scoped to this cluster
         k8s_tile_idx += 1
         pid = f"p_k8s_{k8s_tile_idx}"
         lid = uid()
         cid = uid()
         columns = {cid: col_average("metrics.k8s.node.cpu.utilization", label="CPU %")}
         layer = make_layer(lid, [cid], columns, DATA_VIEW_ID_METRICS)
+        cluster_name = group.get("cluster", "")
+        cpu_query = f'resource.attributes.k8s.cluster.name: "{cluster_name}"' if cluster_name else ""
         state = make_state(layer, {
             "layerId": lid,
             "layerType": "data",
             "metricAccessor": cid,
-            "color": "#54B399",
+            "palette": PALETTE_CPU,
             "subtitle": "Node CPU",
-        })
+        }, query=cpu_query)
         panels.append(make_panel(pid,
             {"h": 6, "i": pid, "w": left_w, "x": x_base, "y": 8},
             "Node CPU", "lnsMetric", state, [make_ref(DATA_VIEW_ID_METRICS, lid)]))
 
-        # Node Memory tile (right half of column)
+        # Node Memory tile (right half of column) — scoped to this cluster
         k8s_tile_idx += 1
         pid = f"p_k8s_{k8s_tile_idx}"
         lid = uid()
         cid = uid()
         columns = {cid: col_average("metrics.k8s.node.memory.utilization", label="Mem %")}
         layer = make_layer(lid, [cid], columns, DATA_VIEW_ID_METRICS)
+        mem_query = f'resource.attributes.k8s.cluster.name: "{cluster_name}"' if cluster_name else ""
         state = make_state(layer, {
             "layerId": lid,
             "layerType": "data",
             "metricAccessor": cid,
             "color": "#6092C0",
             "subtitle": "Node Memory",
-        })
+        }, query=mem_query)
         panels.append(make_panel(pid,
             {"h": 6, "i": pid, "w": right_w, "x": x_base + left_w, "y": 8},
             "Node Memory", "lnsMetric", state, [make_ref(DATA_VIEW_ID_METRICS, lid)]))
@@ -422,7 +497,7 @@ def _build_dashboard_ndjson(
         "layerId": lid,
         "layerType": "data",
         "metricAccessor": cid,
-        "color": "#D36086",
+        "palette": PALETTE_LATENCY_P99,
         "subtitle": "nanoseconds",
     })
     panels.append(make_panel("p30",
@@ -438,7 +513,7 @@ def _build_dashboard_ndjson(
         "layerId": lid,
         "layerType": "data",
         "metricAccessor": cid,
-        "color": "#6092C0",
+        "palette": PALETTE_LATENCY_P50,
         "subtitle": "nanoseconds",
     })
     panels.append(make_panel("p31",
@@ -454,7 +529,7 @@ def _build_dashboard_ndjson(
         "layerId": lid,
         "layerType": "data",
         "metricAccessor": cid,
-        "color": "#E7664C",
+        "palette": PALETTE_ERROR_RATE,
         "subtitle": "ratio",
     })
     panels.append(make_panel("p32",
@@ -470,7 +545,7 @@ def _build_dashboard_ndjson(
         "layerId": lid,
         "layerType": "data",
         "metricAccessor": cid,
-        "color": "#54B399",
+        "palette": PALETTE_THROUGHPUT,
         "subtitle": "spans",
     })
     panels.append(make_panel("p33",

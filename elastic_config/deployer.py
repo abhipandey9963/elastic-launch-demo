@@ -203,8 +203,8 @@ class ScenarioDeployer:
             )
             results["knowledge_base"] = resp.status_code < 300
 
-            # Delete audit indices
-            for suffix in ["significant-events-audit", "remediation-audit", "escalation-audit"]:
+            # Delete audit indices and remediation queue
+            for suffix in ["significant-events-audit", "remediation-audit", "escalation-audit", "remediation-queue", "daily-report-audit"]:
                 client.delete(
                     f"{self.elastic_url}/{self.ns}-{suffix}",
                     headers=_es_headers(self.api_key),
@@ -328,7 +328,7 @@ class ScenarioDeployer:
                 _notify(progress)
                 try:
                     deleted = 0
-                    for suffix in ["significant-events-audit", "remediation-audit", "escalation-audit"]:
+                    for suffix in ["significant-events-audit", "remediation-audit", "escalation-audit", "remediation-queue", "daily-report-audit"]:
                         r = client.delete(
                             f"{self.elastic_url}/{self.ns}-{suffix}",
                             headers=_es_headers(self.api_key),
@@ -569,7 +569,7 @@ class ScenarioDeployer:
         notify(self.progress)
 
     def _generate_workflow_yamls(self) -> dict[str, str]:
-        """Generate 3 workflow YAMLs templated for this scenario."""
+        """Generate 4 workflow YAMLs templated for this scenario."""
         ns = self.ns
         scenario_name = self.scenario.scenario_name
         agent_cfg = self.scenario.agent_config
@@ -667,8 +667,8 @@ steps:
         remediation = f"""version: "1"
 name: {scenario_name} Remediation Action
 description: >
-  Execute remediation actions. Extracts callback_url from log
-  event_name, resolves the fault channel, and logs the result.
+  Execute remediation actions. Queues a remediation command to an ES
+  index for the backend poller to process.
 
 triggers:
   - type: manual
@@ -694,36 +694,49 @@ inputs:
     default: true
 
 steps:
-  - name: pre_action_snapshot
-    type: elasticsearch.esql.query
+  - name: queue_remediation
+    type: elasticsearch.index
     with:
-      query: >
-        FROM logs,logs.* | WHERE KQL("body.text: \\"{{{{ inputs.error_type }}}}\\" AND severity_text: \\"ERROR\\"") | KEEP event_name
-      format: json
-
-  - name: extract_callback
-    type: data.set
-    with:
-      var:
-        - event_meta: "${{{{ steps.pre_action_snapshot.output.values[1][0] | json_parse }}}}"
-
-  - name: execute_remediation
-    type: http
-    with:
-      url: "{{{{ steps.extract_callback.output.var[0].event_meta.callback_url }}}}/api/chaos/resolve"
-      method: POST
-      headers:
-        Content-Type: application/json
-      body:
-        action: "{{{{ inputs.action_type }}}}"
+      index: "{ns}-remediation-queue"
+      document:
         channel: "{{{{ inputs.channel }}}}"
-        deployment_id: "{{{{ steps.extract_callback.output.var[0].event_meta.deployment_id }}}}"
-      timeout: 120s
+        action_type: "{{{{ inputs.action_type }}}}"
+        target_service: "{{{{ inputs.target_service }}}}"
+        justification: "{{{{ inputs.justification }}}}"
+        dry_run: "{{{{ inputs.dry_run }}}}"
+        error_type: "{{{{ inputs.error_type }}}}"
+        namespace: "{ns}"
+        status: "pending"
+        mission_id: "{scenario_name}"
+      refresh: wait_for
 
-  - name: wait_for_stabilization
-    type: wait
+  - name: log_queued
+    type: console
     with:
-      duration: "30s"
+      message: "Remediation QUEUED for channel {{{{ inputs.channel }}}}. Backend will process shortly."
+
+  - name: find_open_case
+    type: kibana.request
+    with:
+      method: GET
+      path: "/api/cases/_find?tags={ns}&tags={{{{ inputs.error_type }}}}&status=open&sortField=createdAt&sortOrder=desc&perPage=1&owner=observability"
+
+  - name: close_case
+    type: if
+    condition: "steps.find_open_case.output.cases.0.id : *"
+    steps:
+      - name: update_case_closed
+        type: kibana.updateCase
+        with:
+          cases:
+            - id: "{{{{ steps.find_open_case.output.cases[0].id }}}}"
+              version: "{{{{ steps.find_open_case.output.cases[0].version }}}}"
+              status: "closed"
+
+  - name: log_case_closed
+    type: console
+    with:
+      message: "Case closed for {{{{ inputs.error_type }}}} (channel {{{{ inputs.channel }}}})."
 
   - name: audit_log
     type: elasticsearch.index
@@ -732,7 +745,12 @@ steps:
       document:
         channel: "{{{{ inputs.channel }}}}"
         action_type: "{{{{ inputs.action_type }}}}"
+        target_service: "{{{{ inputs.target_service }}}}"
         justification: "{{{{ inputs.justification }}}}"
+        dry_run: "{{{{ inputs.dry_run }}}}"
+        status: "resolved"
+        case_closed: true
+        mission_id: "{scenario_name}"
       refresh: wait_for
 """
 
@@ -1569,6 +1587,8 @@ When the user asks you to fix or remediate this issue, use remediation_action to
                 "significant-events-audit",
                 "remediation-audit",
                 "escalation-audit",
+                "remediation-queue",
+                "daily-report-audit",
             ]:
                 try:
                     r = client.delete(

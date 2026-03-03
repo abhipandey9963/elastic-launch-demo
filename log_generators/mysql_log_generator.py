@@ -210,15 +210,15 @@ def _generate_slow_query_log(client: OTLPClient, rng: random.Random,
         event_id=f"EVT-{rng.randint(10000, 99999)}",
     )
 
-    # Query time: mostly 10ms-2s, occasionally pathological up to 30s
-    if rng.random() < 0.15:
-        query_time_s = round(rng.uniform(5.0, 30.0), 3)
+    # Query time: normalized to fit within trace_generator envelope
+    if rng.random() < 0.10:
+        query_time_s = round(rng.uniform(0.3, 0.8), 3)
         severity = "ERROR"
-    elif rng.random() < 0.3:
-        query_time_s = round(rng.uniform(1.0, 5.0), 3)
+    elif rng.random() < 0.25:
+        query_time_s = round(rng.uniform(0.05, 0.3), 3)
         severity = "WARN"
     else:
-        query_time_s = round(rng.uniform(0.01, 1.0), 3)
+        query_time_s = round(rng.uniform(0.002, 0.05), 3)
         severity = "WARN"
 
     lock_time_s = round(rng.uniform(0, query_time_s * 0.3), 3)
@@ -262,7 +262,7 @@ def _generate_slow_query_log(client: OTLPClient, rng: random.Random,
     )
 
     # Build a correlated DB span
-    span_status = STATUS_ERROR if query_time_s > 10.0 else STATUS_OK
+    span_status = STATUS_ERROR if query_time_s > 0.3 else STATUS_OK
     span = client.build_span(
         name=f"{operation} {table}",
         trace_id=trace_id,

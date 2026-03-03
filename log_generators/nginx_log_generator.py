@@ -207,11 +207,11 @@ def _generate_access_log(client: OTLPClient, rng: random.Random,
     ua = rng.choice(USER_AGENTS)
     server = rng.choice(_server_names)
     upstream = rng.choice(UPSTREAM_ADDRS)
-    request_time = round(rng.uniform(0.001, 2.0), 3)
+    request_time = round(rng.uniform(0.001, 0.3), 3)
 
     # Slower requests for error statuses
     if status >= 500:
-        request_time = round(rng.uniform(1.0, 30.0), 3)
+        request_time = round(rng.uniform(0.2, 0.8), 3)
 
     severity = "INFO"
     if status >= 500:

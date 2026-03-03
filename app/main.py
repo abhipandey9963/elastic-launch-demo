@@ -28,10 +28,11 @@ logger = logging.getLogger("nova7")
 
 # ── Multi-tenancy singletons ──────────────────────────────────────────────────
 from app.registry import InstanceRegistry
-from app.store import DeploymentStore
+from app.store import ChaosStore, DeploymentStore
 
 registry = InstanceRegistry()
 store = DeploymentStore()
+chaos_store = ChaosStore()
 
 # In-memory progress trackers keyed by deployment_id
 _deploy_progress: dict[str, dict] = {}
@@ -66,7 +67,7 @@ async def lifespan(app: FastAPI):
                 elastic_api_key=rec["elastic_api_key"],
                 kibana_url=rec["kibana_url"],
             )
-            instance = ScenarioInstance(ctx)
+            instance = ScenarioInstance(ctx, chaos_store=chaos_store)
             instance.start()
             registry.register(rec["deployment_id"], instance)
             logger.info("Restored deployment: %s (%s)", rec["deployment_id"], rec["scenario_id"])
@@ -368,7 +369,10 @@ async def chaos_trigger(body: dict):
     se_name = body.get("se_name", "")
     callback_url = body.get("callback_url", "")
     user_email = body.get("user_email", "")
-    result = inst.chaos_controller.trigger(channel, mode, se_name, callback_url, user_email)
+    session_id = body.get("session_id", "")
+    result = inst.chaos_controller.trigger(
+        channel, mode, se_name, callback_url, user_email, session_id=session_id,
+    )
     if inst.dashboard_ws:
         await inst.dashboard_ws.broadcast_status(inst.chaos_controller, inst.service_manager)
     return result
@@ -381,7 +385,10 @@ async def chaos_resolve(body: dict):
     if not inst:
         return JSONResponse(status_code=404, content={"error": "No active deployment"})
     channel = int(body.get("channel", 0))
-    result = inst.chaos_controller.resolve(channel)
+    session_id = body.get("session_id", "")
+    result = inst.chaos_controller.resolve(channel, session_id=session_id)
+    if result.get("error") == "session_mismatch":
+        return JSONResponse(status_code=403, content=result)
     if inst.dashboard_ws:
         await inst.dashboard_ws.broadcast_status(inst.chaos_controller, inst.service_manager)
     return result
@@ -419,6 +426,16 @@ async def chaos_channel_status(channel: int, deployment_id: Optional[str] = None
     if not inst:
         return {"error": "No active deployment"}
     return inst.chaos_controller.get_channel_status(channel)
+
+
+@app.get("/api/chaos/session/validate")
+async def chaos_session_validate(session_id: str, deployment_id: Optional[str] = None):
+    """Check if a session_id owns any active channels."""
+    inst = _get_instance(deployment_id)
+    if not inst:
+        return {"valid": False, "channels": []}
+    channels = inst.chaos_controller.validate_session(session_id)
+    return {"valid": len(channels) > 0, "channels": channels}
 
 
 # ── Status API ──────────────────────────────────────────────────────────────
@@ -486,7 +503,7 @@ async def remediate_channel(channel: int, deployment_id: Optional[str] = None):
     inst = _get_instance(deployment_id)
     if not inst:
         return JSONResponse(status_code=404, content={"error": "No active deployment"})
-    result = inst.chaos_controller.resolve(channel)
+    result = inst.chaos_controller.resolve(channel, force=True)
     if inst.dashboard_ws:
         await inst.dashboard_ws.broadcast_status(inst.chaos_controller, inst.service_manager)
     return {"action": "remediated", "channel": channel, **result}
@@ -511,6 +528,82 @@ async def notify_email(body: dict):
     message = body.get("body", "")
     result = await send_email(to, subject, message)
     return result
+
+
+# ── Daily Update Report ────────────────────────────────────────────────────
+
+@app.post("/api/daily-update")
+async def send_daily_update(body: dict):
+    """Trigger the Daily Update Report workflow, which uses the AI assistant
+    to analyse recent logs/traces and emails a health summary."""
+    import httpx as _httpx
+
+    email = body.get("email", "").strip()
+    deployment_id = body.get("deployment_id")
+
+    if not email:
+        return JSONResponse(status_code=400, content={"error": "Missing email"})
+
+    inst = _get_instance(deployment_id)
+    if not inst:
+        return JSONResponse(status_code=404, content={"error": "No active deployment"})
+
+    kibana_url = inst.ctx.kibana_url
+    api_key = inst.ctx.elastic_api_key
+    if not kibana_url or not api_key:
+        return JSONResponse(status_code=400, content={"error": "No Kibana credentials"})
+
+    headers = {
+        "Content-Type": "application/json",
+        "kbn-xsrf": "true",
+        "x-elastic-internal-origin": "kibana",
+        "Authorization": f"ApiKey {api_key}",
+    }
+
+    async with _httpx.AsyncClient(timeout=30) as client:
+        # Find the workflow by name
+        search_resp = await client.post(
+            f"{kibana_url}/api/workflows/search",
+            headers=headers,
+            json={"page": 1, "size": 100},
+        )
+        if search_resp.status_code >= 300:
+            return JSONResponse(
+                status_code=502,
+                content={"error": f"Workflow search failed: {search_resp.status_code}"},
+            )
+
+        search_data = search_resp.json()
+        workflows = search_data.get("results", search_data.get("data", []))
+        wf_id = None
+        for wf in workflows:
+            if "Daily Update Report" in wf.get("name", ""):
+                wf_id = wf["id"]
+                break
+
+        if not wf_id:
+            return JSONResponse(
+                status_code=404,
+                content={"error": "Daily Update Report workflow not found — redeploy the scenario"},
+            )
+
+        # Trigger the workflow
+        run_resp = await client.post(
+            f"{kibana_url}/api/workflows/{wf_id}/run",
+            headers=headers,
+            json={"inputs": {"email": email}},
+        )
+        if run_resp.status_code >= 300:
+            return JSONResponse(
+                status_code=502,
+                content={"error": f"Workflow run failed: {run_resp.status_code}"},
+            )
+
+    return {
+        "status": "triggered",
+        "message": "Daily update report requested — check your email in 2-3 minutes",
+        "workflow_id": wf_id,
+    }
 
 
 # ── Setup / Deployer API ───────────────────────────────────────────────────
@@ -630,7 +723,7 @@ async def launch_setup(body: dict):
                 elastic_api_key=api_key,
                 kibana_url=kibana_url,
             )
-            instance = ScenarioInstance(ctx)
+            instance = ScenarioInstance(ctx, chaos_store=chaos_store)
 
             # Reconfigure OTLP if we have an endpoint
             if otlp_endpoint:

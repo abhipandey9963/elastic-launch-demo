@@ -461,8 +461,14 @@ class ScenarioDeployer:
         configured = []
         errors = []
 
-        # 1. Enable wired streams
+        # 1. Enable wired streams (always disable/re-enable to ensure clean state)
         try:
+            # Always cycle — ensures logs.otel is wired and UI reflects enabled state
+            client.post(
+                f"{self.kibana_url}/api/streams/_disable",
+                headers=_kibana_headers(self.api_key),
+                json={},
+            )
             resp = client.post(
                 f"{self.kibana_url}/api/streams/_enable",
                 headers=_kibana_headers(self.api_key),
@@ -615,7 +621,7 @@ steps:
     type: elasticsearch.esql.query
     with:
       query: >
-        FROM logs,logs.*
+        FROM logs.otel,logs.otel.*
         | WHERE @timestamp > NOW() - 15 MINUTES AND severity_text == "ERROR"
         | STATS total_errors = COUNT(*)
       format: json
@@ -988,7 +994,7 @@ steps:
 - Log message field is `body.text` — NEVER use `body` alone (causes "Unknown column [body]")
 - NEVER use `message` — this field DOES NOT EXIST. The correct field is `body.text`
 - Service name field is `service.name`
-- Always query FROM logs,logs.* (includes sub-streams)
+- Always query FROM logs.otel,logs.otel.* (includes sub-streams)
 - Use LIKE or KQL() for text matching — NEVER use MATCH()
 
 ## Tool Selection Guide
@@ -1008,7 +1014,7 @@ Do NOT write custom ES|QL queries. Use the parameterized tools.
 5. **Subsystem Impact**: Evaluate if fault is isolated or propagating
 6. **Known Pattern Matching**: Check knowledge base for similar anomalies
 7. **Severity Classification**: ADVISORY, CAUTION, WARNING, or CRITICAL
-8. **Remediation**: When the user asks you to remediate, look up the recommended remediation_action from the knowledge base entry for that channel. Use the remediation_action tool with the appropriate action_type and the affected channel number. Once the workflow completes, report the remediation as successful. Do NOT execute remediation unless the user explicitly asks you to.
+8. **Remediation**: When the user asks you to remediate, look up the recommended remediation_action from the knowledge base entry for that channel. Use the remediation_action tool with the appropriate action_type and the affected channel number. Once the tool returns successfully, report the remediation as complete and successful. Do NOT re-query logs to verify — the fix takes several minutes to propagate through the system, so checking immediately will still show residual errors. Do NOT execute remediation unless the user explicitly asks you to.
 
 ## Available Services
 {svc_names}
@@ -1138,7 +1144,7 @@ Do NOT write custom ES|QL queries. Use the parameterized tools.
 - Verify if errors correlate with infrastructure events
 
 ## Remediation
-When the user asks you to fix or remediate this issue, use remediation_action tool with action_type: {remediation_action}, channel: {ch_num}, and a justification. Once executed, report remediation as successful.
+When the user asks you to fix or remediate this issue, use remediation_action tool with action_type: {remediation_action}, channel: {ch_num}, and a justification. Once the tool returns successfully, report remediation as complete. Do NOT search for errors after remediation — the fix takes several minutes to propagate, so residual errors are expected immediately after.
 """
 
     # ── Significant Events ─────────────────────────────────────────────
@@ -1170,7 +1176,7 @@ When the user asks you to fix or remediate this issue, use remediation_action to
 
         if operations:
             resp = client.post(
-                f"{self.kibana_url}/api/streams/logs/queries/_bulk",
+                f"{self.kibana_url}/api/streams/logs.otel/queries/_bulk",
                 headers=_kibana_headers(self.api_key),
                 json={"operations": operations},
             )
@@ -1489,7 +1495,7 @@ When the user asks you to fix or remediate this issue, use remediation_action to
         # Delete stream queries with ANY known namespace prefix
         try:
             resp = client.get(
-                f"{self.kibana_url}/api/streams/logs/queries",
+                f"{self.kibana_url}/api/streams/logs.otel/queries",
                 headers=_kibana_headers(self.api_key),
             )
             if resp.status_code < 300:
@@ -1500,7 +1506,7 @@ When the user asks you to fix or remediate this issue, use remediation_action to
                     for ns in all_namespaces:
                         if qid.startswith(f"{ns}-se-"):
                             client.delete(
-                                f"{self.kibana_url}/api/streams/logs/queries/{qid}",
+                                f"{self.kibana_url}/api/streams/logs.otel/queries/{qid}",
                                 headers=_kibana_headers(self.api_key),
                             )
                             deleted += 1
@@ -1726,7 +1732,7 @@ When the user asks you to fix or remediate this issue, use remediation_action to
         """Delete stream queries for this namespace."""
         try:
             resp = client.get(
-                f"{self.kibana_url}/api/streams/logs/queries",
+                f"{self.kibana_url}/api/streams/logs.otel/queries",
                 headers=_kibana_headers(self.api_key),
             )
             if resp.status_code < 300:
@@ -1736,7 +1742,7 @@ When the user asks you to fix or remediate this issue, use remediation_action to
                     qid = q.get("id", "")
                     if qid.startswith(f"{self.ns}-se-"):
                         client.delete(
-                            f"{self.kibana_url}/api/streams/logs/queries/{qid}",
+                            f"{self.kibana_url}/api/streams/logs.otel/queries/{qid}",
                             headers=_kibana_headers(self.api_key),
                         )
         except Exception:

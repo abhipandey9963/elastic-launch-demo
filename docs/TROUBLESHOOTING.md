@@ -292,7 +292,7 @@ FROM logs,logs.*
 **Symptoms:** Workflow completes but no email arrives.
 
 **Check:**
-- Email step uses `Elastic-Cloud-SMTP` connector — this is a preconfigured system connector
+- Email step uses the deploy-time `__EMAIL_CONNECTOR_ID__` pin (`elastic-cloud-email` on ECH, `Elastic-Cloud-SMTP` or similar on serverless)
 - Verify the `user_email` is being extracted correctly from the event
 - Check workflow execution details for the email step output
 
@@ -305,11 +305,18 @@ FROM logs,logs.*
 The app does not have hot-reload. After code changes:
 
 ```bash
+./stop.sh
+./start.sh
+```
+
+Or manually:
+
+```bash
 # Find and kill the existing process
 kill $(lsof -t -i:8080)
 
-# Restart
-nohup python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8080 &
+# Restart (logs to /tmp/nova7.log)
+./start.sh
 ```
 
 ### App process dies unexpectedly

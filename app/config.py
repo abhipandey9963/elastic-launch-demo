@@ -62,7 +62,7 @@ KIBANA_PROXY = _kibana_proxy_raw
 ELASTIC_API_KEY = os.getenv("ELASTIC_API_KEY", "")
 ELASTIC_URL = os.getenv("ELASTIC_URL", "")
 
-from scenarios import get_scenario  # noqa: E402
+from scenario_engine import get_scenario  # noqa: E402
 
 _scenario = get_scenario(ACTIVE_SCENARIO)
 
@@ -77,12 +77,6 @@ CHANNEL_REGISTRY: dict[int, dict[str, Any]] = _scenario.channel_registry
 # Mission/scenario identity
 MISSION_ID = _scenario.namespace.upper()  # "NOVA7", "FANATICS", etc.
 MISSION_NAME = _scenario.scenario_name
-
-# Countdown (from scenario or defaults)
-_countdown = _scenario.countdown_config
-COUNTDOWN_START_SECONDS = _countdown.start_seconds if _countdown.enabled else 600
-COUNTDOWN_SPEED = _countdown.speed if _countdown.enabled else 1.0
-COUNTDOWN_ENABLED = _countdown.enabled
 
 # Severity Number Mapping (shared across all scenarios)
 SEVERITY_MAP = {

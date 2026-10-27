@@ -1,17 +1,20 @@
 version: "1"
 name: __SCENARIO_NAME__ Daily Update Report
 description: >
-  Generate and email a daily system health report using the Observability
-  AI Assistant.  Triggered manually from the chaos controller UI.
+  Generate and email a daily system health report using the scenario's
+  Agent Builder agent. Triggered manually from the chaos controller UI.
 
+tags:
+  - "__NS__"
+
+# Kibana 9.5+: inputs under manual trigger (elastic/kibana#269992).
 triggers:
   - type: manual
-
-inputs:
-  - name: email
-    type: string
-    required: true
-    description: "Recipient email address for the health report"
+    inputs:
+      - name: email
+        type: string
+        required: true
+        description: "Recipient email address for the health report"
 
 steps:
   - name: count_errors
@@ -36,7 +39,7 @@ steps:
 
   - name: generate_report
     type: ai.agent
-    agent-id: observability.agent
+    agent-id: __AGENT_ID__
     with:
       message: >
         You are generating a Daily System Health Report for __SCENARIO_NAME__.
@@ -56,7 +59,7 @@ steps:
 
   - name: send_email
     type: email
-    connector-id: Elastic-Cloud-SMTP
+    connector-id: __EMAIL_CONNECTOR_ID__
     with:
       to:
         - "{{ inputs.email }}"

@@ -26,6 +26,12 @@ from app.telemetry import (
     _now_ns,
 )
 from app.config import SEVERITY_MAP, NAMESPACE
+from app.trace_context import _trace_context_store
+
+# Nginx is the front door for the demo: any active fault on any service is
+# observable as elevated 5xx + correlated logs at the nginx layer.
+# This permissive relevance keeps the trace<->log channel pivot demonstrable
+# across every scenario without requiring scenario-specific subsystem strings.
 
 # Span kind constants
 SPAN_KIND_SERVER = 2
@@ -40,31 +46,6 @@ BATCH_INTERVAL_MIN = 2
 BATCH_INTERVAL_MAX = 5
 BATCH_SIZE_MIN = 5
 BATCH_SIZE_MAX = 20
-
-# ── Realistic nginx data pools ────────────────────────────────────────────────
-ENDPOINTS = [
-    "/api/v1/telemetry",
-    "/api/v1/health",
-    "/api/v1/metrics",
-    "/api/v1/traces",
-    "/api/v1/logs",
-    f"/api/v1/agents/{NAMESPACE}",
-    "/api/v1/channels/status",
-    "/api/v1/operations/status",
-    "/api/v1/operations/emergency",
-    "/api/v2/telemetry/stream",
-    "/static/app.js",
-    "/static/app.css",
-    "/static/dashboard.js",
-    "/static/favicon.ico",
-    "/dashboard",
-    "/dashboard/operations",
-    "/dashboard/overview",
-    "/login",
-    "/logout",
-    "/healthz",
-    "/readyz",
-]
 
 METHODS = [
     "GET",
@@ -125,8 +106,6 @@ USER_AGENTS = [
     "kube-probe/1.28",
 ]
 
-SERVER_NAMES = [f"{NAMESPACE}-nginx-01", f"{NAMESPACE}-nginx-02"]
-
 ERROR_MESSAGES = [
     ("error", "upstream timed out (110: Connection timed out) while connecting to upstream"),
     ("error", "upstream prematurely closed connection while reading response header from upstream"),
@@ -173,24 +152,36 @@ NGINX_HOST_CONFIGS = [
 
 
 # ── Log record generators ────────────────────────────────────────────────────
+def _channel_relevant_to_nginx(ch: dict) -> bool:
+    """Any active channel is reflected at the front-door nginx tier."""
+    return bool(ch)
+
+
 def _generate_access_log(
     client: OTLPClient,
     rng: random.Random,
     endpoints: list | None = None,
     server_names: list | None = None,
     namespace: str | None = None,
+    active_chaos: dict | None = None,
 ) -> tuple[dict, dict | None]:
     """Generate an access log record and optionally an HTTP trace span.
 
     Returns (log_record, span_or_None).
+    When ``active_chaos`` is provided, force a 5xx status, tag with chaos.* attrs,
+    and source trace_id/span_id from the shared trace context store so the
+    access log links back to a real APM error transaction.
     """
-    _endpoints = endpoints or ENDPOINTS
-    _server_names = server_names or SERVER_NAMES
+    _endpoints = endpoints
+    _server_names = server_names
     _ns = namespace or NAMESPACE
 
     method = rng.choice(METHODS)
     path = rng.choice(_endpoints)
-    status = rng.choice(STATUS_CODES)
+    if active_chaos:
+        status = rng.choice([500, 502, 503, 504])
+    else:
+        status = rng.choice(STATUS_CODES)
     body_bytes = rng.randint(0, 50000) if status == 200 else rng.randint(0, 500)
     client_ip = rng.choice(CLIENT_IPS)
     ua = rng.choice(USER_AGENTS)
@@ -208,9 +199,19 @@ def _generate_access_log(
     elif status >= 400:
         severity = "WARN"
 
-    # Generate trace/span IDs for correlation
-    trace_id = secrets.token_hex(16)
-    span_id = secrets.token_hex(8)
+    # Trace/span IDs: prefer the affected service's last error trace from the shared store
+    trace_id = None
+    span_id = None
+    _ns = namespace or ""
+    if active_chaos:
+        for svc in active_chaos.get("affected_services", []):
+            t, s = _trace_context_store.get(svc, namespace=_ns)
+            if t and s:
+                trace_id, span_id = t, s
+                break
+    if trace_id is None:
+        trace_id = secrets.token_hex(16)
+        span_id = secrets.token_hex(8)
 
     body = (
         f'{client_ip} - - "{method} {path} HTTP/1.1" {status} {body_bytes} '
@@ -234,6 +235,14 @@ def _generate_access_log(
         "upstream.address": upstream,
         "nginx.request_time": request_time,
     }
+    if active_chaos:
+        attrs["chaos.channel"] = active_chaos["channel_id"]
+        if active_chaos.get("name"):
+            attrs["chaos.fault_type"] = active_chaos["name"]
+        if active_chaos.get("subsystem"):
+            attrs["chaos.subsystem"] = active_chaos["subsystem"]
+        if status >= 500 and active_chaos.get("error_type"):
+            attrs["error.type"] = active_chaos["error_type"]
 
     log_record = client.build_log_record(
         severity=severity,
@@ -246,6 +255,24 @@ def _generate_access_log(
     # Build a correlated HTTP span
     span_status = STATUS_ERROR if status >= 500 else STATUS_OK
     duration_ms = int(request_time * 1000)
+    _span_attrs = {
+        "http.request.method": method,
+        "url.path": path,
+        "http.response.status_code": status,
+        "server.address": server,
+        "server.port": 80,
+        "client.address": client_ip,
+        "user_agent.original": ua,
+        "network.protocol.version": "1.1",
+    }
+    if active_chaos:
+        _span_attrs["chaos.channel"] = active_chaos["channel_id"]
+        if active_chaos.get("name"):
+            _span_attrs["chaos.fault_type"] = active_chaos["name"]
+        if active_chaos.get("subsystem"):
+            _span_attrs["chaos.subsystem"] = active_chaos["subsystem"]
+        if span_status == STATUS_ERROR and active_chaos.get("error_type"):
+            _span_attrs["error.type"] = active_chaos["error_type"]
     span = client.build_span(
         name=f"{method} {path}",
         trace_id=trace_id,
@@ -253,16 +280,7 @@ def _generate_access_log(
         kind=SPAN_KIND_SERVER,
         duration_ms=max(1, duration_ms),
         status_code=span_status,
-        attributes={
-            "http.request.method": method,
-            "url.path": path,
-            "http.response.status_code": status,
-            "server.address": server,
-            "server.port": 80,
-            "client.address": client_ip,
-            "user_agent.original": ua,
-            "network.protocol.version": "1.1",
-        },
+        attributes=_span_attrs,
     )
 
     return log_record, span
@@ -273,11 +291,17 @@ def _generate_error_log(
     rng: random.Random,
     endpoints: list | None = None,
     server_names: list | None = None,
+    active_chaos: dict | None = None,
+    namespace: str | None = None,
 ) -> dict:
-    _endpoints = endpoints or ENDPOINTS
-    _server_names = server_names or SERVER_NAMES
+    _endpoints = endpoints
+    _server_names = server_names
 
-    log_level, error_msg = rng.choice(ERROR_MESSAGES)
+    if active_chaos and active_chaos.get("error_message_short"):
+        log_level = "error"
+        error_msg = active_chaos["error_message_short"]
+    else:
+        log_level, error_msg = rng.choice(ERROR_MESSAGES)
     server = rng.choice(_server_names)
     upstream = rng.choice(UPSTREAM_ADDRS)
     client_ip = rng.choice(CLIENT_IPS)
@@ -300,13 +324,33 @@ def _generate_error_log(
         "event.type": "error",
         "event.kind": "event",
     }
+    trace_id = None
+    span_id = None
+    if active_chaos:
+        attrs["chaos.channel"] = active_chaos["channel_id"]
+        if active_chaos.get("name"):
+            attrs["chaos.fault_type"] = active_chaos["name"]
+        if active_chaos.get("subsystem"):
+            attrs["chaos.subsystem"] = active_chaos["subsystem"]
+        if active_chaos.get("error_type"):
+            attrs["error.type"] = active_chaos["error_type"]
+        _ns = namespace or ""
+        for svc in active_chaos.get("affected_services", []):
+            t, s = _trace_context_store.get(svc, namespace=_ns)
+            if t and s:
+                trace_id, span_id = t, s
+                break
 
-    return client.build_log_record(severity=severity, body=body, attributes=attrs)
+    return client.build_log_record(
+        severity=severity, body=body, attributes=attrs,
+        trace_id=trace_id, span_id=span_id,
+    )
 
 
 # ── Run loop (used by ServiceManager and standalone) ──────────────────────────
 def run(
-    client: OTLPClient, stop_event: threading.Event, scenario_data: dict | None = None
+    client: OTLPClient, stop_event: threading.Event, scenario_data: dict | None = None,
+    chaos_controller=None,
 ) -> None:
     """Run nginx log generator loop until stop_event is set."""
     rng = random.Random()
@@ -316,6 +360,8 @@ def run(
         ns = scenario_data["namespace"]
     else:
         ns = NAMESPACE
+
+    _channel_registry: dict = scenario_data.get("channel_registry", {}) if scenario_data else {}
 
     server_names = [f"{ns}-nginx-01", f"{ns}-nginx-02"]
     endpoints = [
@@ -386,11 +432,20 @@ def run(
     if scenario_data and "services" in scenario_data:
         _emit_traces = "nginx-proxy" in scenario_data["services"]
 
+    # Only emit traces if nginx-proxy is in the scenario's services (avoids
+    # disconnected Service Map nodes when the scenario doesn't include it).
+    _emit_traces = True
+    if scenario_data and "services" in scenario_data:
+        _emit_traces = "nginx-proxy" in scenario_data["services"]
+
     total_sent = 0
     total_spans = 0
     error_spike_active = False
 
-    logger.info("Nginx log generator started (namespace=%s)", ns)
+    logger.info(
+        "Nginx log generator started (namespace=%s, chaos_aware=%s)",
+        ns, chaos_controller is not None,
+    )
 
     while not stop_event.is_set():
         batch_size = rng.randint(BATCH_SIZE_MIN, BATCH_SIZE_MAX)
@@ -400,6 +455,25 @@ def run(
             error_spike_active = True
         elif error_spike_active and rng.random() < 0.5:
             error_spike_active = False
+
+        # Resolve a single nginx-relevant active channel (if any) for this batch.
+        # When present, a fraction of access logs become 5xx with chaos.* attrs,
+        # and error logs are tagged + correlated via the trace context store.
+        active_chaos: dict | None = None
+        if chaos_controller and _channel_registry:
+            for ch_id in chaos_controller.get_active_channels():
+                ch = _channel_registry.get(ch_id)
+                if ch and _channel_relevant_to_nginx(ch):
+                    short_msg = (ch.get("error_message") or "").split("\n", 1)[0][:240]
+                    active_chaos = {
+                        "channel_id": ch_id,
+                        "name": ch.get("name"),
+                        "subsystem": ch.get("subsystem"),
+                        "error_type": ch.get("error_type"),
+                        "affected_services": ch.get("affected_services", []),
+                        "error_message_short": short_msg,
+                    }
+                    break
 
         # Pick a random nginx host for this batch (distributes across instances)
         host_idx = rng.randint(0, len(nginx_hosts) - 1)
@@ -411,8 +485,10 @@ def run(
         access_records = []
         spans = []
         for _ in range(batch_size):
+            # During active chaos, ~40% of access logs reflect the fault
+            req_chaos = active_chaos if (active_chaos and rng.random() < 0.4) else None
             log_record, span = _generate_access_log(
-                client, rng, endpoints, server_names, ns
+                client, rng, endpoints, server_names, ns, active_chaos=req_chaos,
             )
             access_records.append(log_record)
             if span:
@@ -424,13 +500,22 @@ def run(
             client.send_traces(trace_resource, spans)
             total_spans += len(spans)
 
-        # Generate error logs (more during spikes)
-        error_count = rng.randint(3, 10) if error_spike_active else rng.randint(0, 2)
+        # Generate error logs (more during spikes or active chaos)
+        if active_chaos:
+            error_count = rng.randint(4, 12)
+        elif error_spike_active:
+            error_count = rng.randint(3, 10)
+        else:
+            error_count = rng.randint(0, 2)
         if error_count > 0:
             error_records = []
             for _ in range(error_count):
                 error_records.append(
-                    _generate_error_log(client, rng, endpoints, server_names)
+                    _generate_error_log(
+                        client, rng, endpoints, server_names,
+                        active_chaos=active_chaos,
+                        namespace=ns,
+                    )
                 )
             client.send_logs(error_resource, error_records)
 

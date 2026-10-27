@@ -4,49 +4,58 @@ description: >
   Execute remediation actions for __SCENARIO_NAME__ anomalies. Queues a
   remediation command to an ES index for the backend poller to process.
 
+tags:
+  - "__NS__"
+
+# Kibana 9.5+: inputs MUST live under the manual trigger (not root-level).
+# Root-level inputs leave Agent Builder workflow tools with an empty schema
+# (elastic/kibana#269992), so every tool call arrives with inputs: {}.
 triggers:
   - type: manual
-
-inputs:
-  - name: error_type
-    type: string
-    required: true
-    description: "Error type to remediate"
-  - name: channel
-    type: number
-    required: true
-    description: "Fault channel being remediated (1-20)"
-  - name: action_type
-    type: string
-    required: true
-    description: "Remediation action to execute (scenario-specific, e.g. restart_mobile_gateway, reset_vpc_peering)"
-  - name: target_service
-    type: string
-    default: ""
-    description: "Service to target for restart/failover actions"
-  - name: justification
-    type: string
-    required: true
-    description: "Reason for executing this remediation"
-  - name: dry_run
-    type: boolean
-    default: true
-  - name: case_id
-    type: string
-    default: ""
-    description: "Direct case ID to close (skips tag search when provided — always pass this when remediating from a case context)"
-  - name: requires_approval
-    type: boolean
-    default: true
-    description: "Pause for operator approval before queueing remediation. Auto-remediate flows pass false."
+    inputs:
+      - name: error_type
+        type: string
+        required: true
+        description: "Error type to remediate"
+      - name: channel
+        type: number
+        required: true
+        description: "Fault channel being remediated (1-20)"
+      - name: action_type
+        type: string
+        required: true
+        description: "Remediation action to execute (scenario-specific, e.g. restart_mobile_gateway, reset_vpc_peering)"
+      - name: target_service
+        type: string
+        default: ""
+        description: "Service to target for restart/failover actions"
+      - name: justification
+        type: string
+        required: true
+        description: "Reason for executing this remediation"
+      - name: dry_run
+        type: boolean
+        default: true
+        description: "If true, poller records the command without resolving the fault. Pass false to remediate."
+      - name: case_id
+        type: string
+        default: ""
+        description: "Direct case ID to close (skips tag search when provided — always pass this when remediating from a case context)"
+      - name: approval_mode
+        type: string
+        default: "required"
+        description: "required (default) = HITL waitForInput; skip = queue immediately (auto-remediate alerts only). Direct/agent calls default to HITL."
+      - name: requires_approval
+        type: boolean
+        default: true
+        description: "Deprecated — use approval_mode. If true and approval_mode omitted, approval is required."
 
 steps:
-  # Approval gate — only runs when requires_approval=true. Pauses the workflow
-  # at status WAITING_FOR_INPUT; Agent Builder surfaces the schema-driven
-  # prompt inside the conversation. On denial, comments the case and audits.
+  # HITL path — runs unless approval_mode is explicitly skip.
+  # String KQL on approval_mode (booleans do not match reliably from Agent Builder).
   - name: approval_flow
     type: if
-    condition: "inputs.requires_approval : true"
+    condition: "NOT inputs.approval_mode : skip"
     steps:
       - name: await_operator_approval
         type: waitForInput
@@ -69,13 +78,16 @@ steps:
                 title: "Notes (optional)"
             required: ["approved"]
 
-      - name: handle_denial
+      # On 9.5, waitForInput stores the resume payload under output.response
+      # (e.g. {response: {approved, notes}, respondedBy}), not flat on output.
+      # Deny on explicit false; else (approve) queues remediation.
+      - name: handle_decision
         type: if
-        condition: "steps.await_operator_approval.output.approved : false"
+        condition: "steps.await_operator_approval.output.response.approved : false"
         steps:
           - name: comment_denial
             type: if
-            condition: "inputs.case_id : *"
+            condition: 'inputs.case_id : * AND NOT inputs.case_id : ""'
             steps:
               - name: post_denial_comment
                 type: kibana.request
@@ -93,7 +105,7 @@ steps:
                       - **Target service:** {{ inputs.target_service }}
                       - **Error type:** {{ inputs.error_type }}
                       - **Channel:** {{ inputs.channel }}
-                      - **Operator notes:** {{ steps.await_operator_approval.output.notes }}
+                      - **Operator notes:** {{ steps.await_operator_approval.output.response.notes }}
 
                       The case remains open for manual follow-up.
                     owner: "observability"
@@ -113,14 +125,72 @@ steps:
                 mission_id: "__SCENARIO_NAME__"
               refresh: wait_for
 
-  # Execute remediation unless the operator explicitly denied. KQL: when the
-  # await step was skipped (auto-remediate path) the approved field doesn't
-  # exist → `: false` doesn't match → NOT(no-match) → true → executes.
-  - name: execute_remediation
+        else:
+          - name: queue_remediation_hitl
+            type: elasticsearch.index
+            with:
+              index: "__NS__-remediation-queue"
+              document:
+                channel: "{{ inputs.channel }}"
+                action_type: "{{ inputs.action_type }}"
+                target_service: "{{ inputs.target_service }}"
+                justification: "{{ inputs.justification }}"
+                dry_run: "{{ inputs.dry_run }}"
+                error_type: "{{ inputs.error_type }}"
+                namespace: "__NS__"
+                status: "pending"
+                mission_id: "__SCENARIO_NAME__"
+              refresh: wait_for
+
+          - name: log_queued_hitl
+            type: console
+            with:
+              message: "Remediation QUEUED for channel {{ inputs.channel }} (HITL approved). Backend will process shortly."
+
+          - name: comment_case_hitl
+            type: if
+            condition: 'inputs.case_id : * AND NOT inputs.case_id : ""'
+            steps:
+              - name: add_comment_hitl
+                type: cases.addComment
+                on-failure:
+                  continue: true
+                with:
+                  case_id: "{{ inputs.case_id }}"
+                  comment: |
+                    ## Remediation Initiated
+
+                    - **Action:** {{ inputs.action_type }}
+                    - **Target Service:** {{ inputs.target_service }}
+                    - **Error Type:** {{ inputs.error_type }}
+                    - **Channel:** {{ inputs.channel }}
+                    - **Dry Run:** {{ inputs.dry_run }}
+                    - **Justification:** {{ inputs.justification }}
+
+                    The case will close automatically once the alert clears.
+
+          - name: audit_log_hitl
+            type: elasticsearch.index
+            with:
+              index: "__NS__-remediation-audit"
+              document:
+                channel: "{{ inputs.channel }}"
+                action_type: "{{ inputs.action_type }}"
+                target_service: "{{ inputs.target_service }}"
+                justification: "{{ inputs.justification }}"
+                dry_run: "{{ inputs.dry_run }}"
+                status: "remediation_queued"
+                approval_mode: "{{ inputs.approval_mode }}"
+                mission_id: "__SCENARIO_NAME__"
+              refresh: wait_for
+
+  # Auto path — approval_mode skip (string). Used when Agent Builder passes
+  # inputs correctly, or when invoked via workflow run API.
+  - name: execute_auto
     type: if
-    condition: "NOT steps.await_operator_approval.output.approved : false"
+    condition: "inputs.approval_mode : skip"
     steps:
-      - name: queue_remediation
+      - name: queue_remediation_auto
         type: elasticsearch.index
         with:
           index: "__NS__-remediation-queue"
@@ -136,101 +206,79 @@ steps:
             mission_id: "__SCENARIO_NAME__"
           refresh: wait_for
 
-      - name: log_queued
+      - name: log_queued_auto
         type: console
         with:
-          message: "Remediation QUEUED for channel {{ inputs.channel }}. Backend will process shortly."
+          message: "Remediation QUEUED for channel {{ inputs.channel }} (auto). Backend will process shortly."
 
-      # Path A: case_id provided — use it directly, no search needed
-      - name: close_provided_case
+      - name: comment_case_auto
         type: if
-        condition: "inputs.case_id : *"
+        condition: 'inputs.case_id : * AND NOT inputs.case_id : ""'
         steps:
-          - name: add_comment_to_provided_case
-            type: kibana.request
+          - name: add_comment_auto
+            type: cases.addComment
+            on-failure:
+              continue: true
             with:
-              method: POST
-              path: "/api/cases/{{ inputs.case_id }}/comments"
-              headers:
-                kbn-xsrf: "true"
-              body:
-                type: "user"
-                comment: |
-                  ## Remediation Performed
+              case_id: "{{ inputs.case_id }}"
+              comment: |
+                ## Remediation Initiated
 
-                  - **Action:** {{ inputs.action_type }}
-                  - **Target Service:** {{ inputs.target_service }}
-                  - **Error Type:** {{ inputs.error_type }}
-                  - **Channel:** {{ inputs.channel }}
-                  - **Dry Run:** {{ inputs.dry_run }}
-                  - **Justification:** {{ inputs.justification }}
-                owner: "observability"
+                - **Action:** {{ inputs.action_type }}
+                - **Target Service:** {{ inputs.target_service }}
+                - **Error Type:** {{ inputs.error_type }}
+                - **Channel:** {{ inputs.channel }}
+                - **Dry Run:** {{ inputs.dry_run }}
+                - **Justification:** {{ inputs.justification }}
 
-          - name: refetch_provided_case
-            type: kibana.request
+                The case will close automatically once the alert clears.
+
+          - name: log_case_updated_auto
+            type: console
             with:
-              method: GET
-              path: "/api/cases/{{ inputs.case_id }}"
+              message: "Remediation recorded on case {{ inputs.case_id }} for {{ inputs.error_type }} (channel {{ inputs.channel }}); case stays open until alert clears."
 
-          - name: update_provided_case_closed
-            type: kibana.updateCase
+        else:
+          - name: search_open_case
+            type: cases.findCases
             with:
-              cases:
-                - id: "{{ steps.refetch_provided_case.output.id }}"
-                  version: "{{ steps.refetch_provided_case.output.version }}"
-                  status: "closed"
+              tags:
+                - "{{ inputs.error_type }}"
+              status: "open"
+              owner: "observability"
+              sortField: "createdAt"
+              sortOrder: "desc"
+              perPage: 1
 
-      # Path B: no case_id — fall back to tag-based search
-      - name: find_open_case
-        type: kibana.request
-        with:
-          method: GET
-          path: "/api/cases/_find?tags=__NS__&tags={{ inputs.error_type }}&status=open&sortField=createdAt&sortOrder=desc&perPage=1&owner=observability"
+          - name: comment_found_case
+            type: if
+            condition: "steps.search_open_case.output.cases.0.id : *"
+            steps:
+              - name: add_remediation_comment
+                type: cases.addComment
+                on-failure:
+                  continue: true
+                with:
+                  case_id: "{{ steps.search_open_case.output.cases[0].id }}"
+                  comment: |
+                    ## Remediation Initiated
 
-      - name: close_case
-        type: if
-        condition: "NOT inputs.case_id : * AND steps.find_open_case.output.cases.0.id : *"
-        steps:
-          - name: add_remediation_comment
-            type: kibana.request
-            with:
-              method: POST
-              path: "/api/cases/{{ steps.find_open_case.output.cases[0].id }}/comments"
-              headers:
-                kbn-xsrf: "true"
-              body:
-                type: "user"
-                comment: |
-                  ## Remediation Performed
+                    - **Action:** {{ inputs.action_type }}
+                    - **Target Service:** {{ inputs.target_service }}
+                    - **Error Type:** {{ inputs.error_type }}
+                    - **Channel:** {{ inputs.channel }}
+                    - **Dry Run:** {{ inputs.dry_run }}
+                    - **Justification:** {{ inputs.justification }}
 
-                  - **Action:** {{ inputs.action_type }}
-                  - **Target Service:** {{ inputs.target_service }}
-                  - **Error Type:** {{ inputs.error_type }}
-                  - **Channel:** {{ inputs.channel }}
-                  - **Dry Run:** {{ inputs.dry_run }}
-                  - **Justification:** {{ inputs.justification }}
-                owner: "observability"
+                    The case will close automatically once the alert clears.
 
-          - name: refetch_case
-            type: kibana.request
-            with:
-              method: GET
-              path: "/api/cases/{{ steps.find_open_case.output.cases[0].id }}"
+            else:
+              - name: log_no_case_found
+                type: console
+                with:
+                  message: "No open case found for {{ inputs.error_type }} (channel {{ inputs.channel }}). Remediation was queued regardless."
 
-          - name: update_case_closed
-            type: kibana.updateCase
-            with:
-              cases:
-                - id: "{{ steps.refetch_case.output.id }}"
-                  version: "{{ steps.refetch_case.output.version }}"
-                  status: "closed"
-
-      - name: log_case_closed
-        type: console
-        with:
-          message: "Case closed for {{ inputs.error_type }} (channel {{ inputs.channel }})."
-
-      - name: audit_log
+      - name: audit_log_auto
         type: elasticsearch.index
         with:
           index: "__NS__-remediation-audit"
@@ -240,8 +288,7 @@ steps:
             target_service: "{{ inputs.target_service }}"
             justification: "{{ inputs.justification }}"
             dry_run: "{{ inputs.dry_run }}"
-            status: "resolved"
-            approval_requested: "{{ inputs.requires_approval }}"
-            case_closed: true
+            status: "remediation_queued"
+            approval_mode: "{{ inputs.approval_mode }}"
             mission_id: "__SCENARIO_NAME__"
           refresh: wait_for

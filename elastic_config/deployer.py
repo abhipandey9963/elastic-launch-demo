@@ -11,12 +11,14 @@ from typing import Any
 
 import httpx
 
-from scenarios.base import BaseScenario
+from scenario_engine.base import BaseScenario
 
 from elastic_config.deployer_base import (
     DeployStep,
     DeployProgress,
     ProgressCallback,
+    StepIdx,
+    WORKFLOW_INDEX_SUFFIXES,
     _kibana_headers,
     _es_headers,
 )
@@ -77,6 +79,7 @@ class ScenarioDeployer(
         kibana_url: str,
         api_key: str,
         kibana_proxy: str = "",
+        cloud_api_key: str = "",
     ):
         self.scenario = scenario
         self.elastic_url = elastic_url.strip().rstrip("/")
@@ -85,15 +88,53 @@ class ScenarioDeployer(
         # kibana_display_url is used in user-facing links (workflows, agent).
         # Falls back to the real kibana_url if no proxy is configured.
         self.kibana_display_url = kibana_proxy.strip().rstrip("/") or self.kibana_url
+        self.cloud_api_key = cloud_api_key.strip() if cloud_api_key else ""
         self.ns = scenario.namespace
         self.progress = DeployProgress()
         self._workflow_ids: dict[str, str] = {}     # name fragment -> workflow ID
         self._created_tool_ids: list[str] = []     # tools that were actually created
         self._created_skill_ids: list[str] = []    # skill IDs attached to the agent
+        # Cached (build_flavor, version_number) from /api/status, e.g.
+        # ("serverless", "9.6.0") or ("traditional", "9.5.3").
+        # Populated in _check_connectivity once Kibana is reachable.
+        self._kibana_env: tuple[str, str] = ("", "")
+
+    def _is_elastic_cloud(self) -> bool:
+        """Detect ECH (Elastic Cloud Hosted) from Kibana URL pattern.
+
+        Excludes serverless projects: they share the .kb.*.elastic.cloud suffix
+        but live on a different management API and accept different config
+        mechanisms.  Use _is_serverless() to distinguish them.
+        """
+        return (
+            ".kb." in self.kibana_url
+            and ".elastic.cloud" in self.kibana_url
+            and not self._is_serverless()
+        )
+
+    def _is_serverless(self) -> bool:
+        """Return True if the target Kibana is a serverless project."""
+        return self._kibana_env[0] == "serverless"
+
+    def _kibana_version_ge(self, major: int, minor: int) -> bool:
+        """Return True if the cached Kibana version is >= major.minor.
+
+        Parses defensively — SNAPSHOT suffixes and pre-release tags are ignored.
+        Returns False if the version string was never populated.
+        """
+        raw = self._kibana_env[1]
+        if not raw:
+            return False
+        try:
+            parts = raw.split("-")[0].split(".")
+            v_major, v_minor = int(parts[0]), int(parts[1]) if len(parts) > 1 else 0
+            return (v_major, v_minor) >= (major, minor)
+        except (ValueError, IndexError):
+            return False
 
     # ── Public API ─────────────────────────────────────────────────────
 
-    def deploy_all(self, callback: ProgressCallback | None = None) -> DeployProgress:
+    def deploy_all(self, callback: ProgressCallback | None = None, on_otlp_ready=None) -> DeployProgress:
         """Run the full deployment pipeline.  Returns progress summary."""
         self.progress = DeployProgress(steps=[
             DeployStep("Connectivity check"),           # 0
@@ -101,21 +142,23 @@ class ScenarioDeployer(
             DeployStep("Derive OTLP endpoint"),         # 2
             DeployStep("Clean up old artifacts"),       # 3
             DeployStep("Configure platform settings"),  # 4
-            DeployStep("Install OTel integrations", items_total=5),  # 5
-            DeployStep("Generate APM rollup data"),     # 6
-            DeployStep("Deploy workflows", items_total=5),  # 7
-            DeployStep("Index knowledge base", items_total=20),  # 8
-            DeployStep("Deploy AI agent tools", items_total=7),  # 9
-            DeployStep("Create AI agent"),              # 10
-            DeployStep("Create significant events", items_total=20),  # 11
-            DeployStep("Create data views", items_total=6),  # 12
-            DeployStep("Import Kibana dashboards"),   # 13
-            DeployStep("Create alert rules", items_total=20),  # 14
-            DeployStep("Backfill raw ECS access logs"), # 15
-            DeployStep("Enable APM anomaly detection"), # 16
-            DeployStep("Enable logs ML jobs (rate + categorization)"), # 17
-            DeployStep("Create SLOs", items_total=3),  # 18
-            DeployStep("Create Synthetics monitors", items_total=5),  # 19
+            DeployStep("Generate APM rollup data"),     # 5
+            DeployStep("Deploy workflows", items_total=5),  # 6
+            DeployStep("Index knowledge base", items_total=20),  # 7
+            DeployStep("Deploy AI agent tools", items_total=7),  # 8
+            DeployStep("Create AI agent"),              # 9
+            DeployStep("Create scenario stream"),       # 10
+            DeployStep("Generate knowledge indicators"),  # 11
+            DeployStep("Create significant events", items_total=20),  # 12
+            DeployStep("Create data views", items_total=6),  # 13
+            DeployStep("Import Kibana dashboards"),   # 14
+            DeployStep("Create alert rules", items_total=20),  # 15
+            DeployStep("Backfill raw ECS access logs"), # 16
+            DeployStep("Enable APM anomaly detection"), # 17
+            DeployStep("Enable logs ML jobs (rate + categorization)"), # 18
+            DeployStep("Create SLOs", items_total=3),  # 19
+            DeployStep("Install OTel integrations", items_total=5),  # 20
+            DeployStep("Create Synthetics monitors", items_total=5),  # 21
         ])
         _notify = callback or (lambda p: None)
         _notify(self.progress)
@@ -127,20 +170,45 @@ class ScenarioDeployer(
                 self._derive_otlp_step(client, _notify)
                 self._cleanup_all_scenarios_step(client, _notify)
                 self._configure_platform_settings(client, _notify)
-                self._install_integrations(client, _notify)
+                # Fire the early-start hook after platform settings so _enable
+                # runs before log generators write to logs.ecs — otherwise the
+                # plain logs.ecs index blocks wired-stream creation and the
+                # per-scenario logs.otel.<ns> fork never succeeds.
+                # A hook failure must never abort the rest of the deploy.
+                if on_otlp_ready is not None and self.progress.otlp_endpoint:
+                    try:
+                        on_otlp_ready(self.progress.otlp_endpoint)
+                    except Exception:
+                        logger.warning(
+                            "on_otlp_ready hook raised an exception; ignoring",
+                            exc_info=True,
+                        )
                 self._deploy_apm_rollup(client, _notify)
+                # Start the APM ML job early so ES processes the 12h backfill
+                # server-side during the intervening steps; the catch-up poll
+                # runs at the very end via _finalize_apm_anomaly_detection.
+                self._setup_apm_anomaly_detection(client, _notify)
                 self._deploy_workflows(client, _notify)
                 self._deploy_knowledge_base(client, _notify)
                 self._deploy_tools(client, _notify)
                 self._deploy_agent(client, _notify)
+                self._deploy_scenario_stream(client, _notify)
+                self._deploy_knowledge_indicators(client, _notify)
                 self._deploy_significant_events(client, _notify)
                 self._deploy_data_views(client, _notify)
                 self._deploy_dashboard(client, _notify)
                 self._deploy_alerting(client, _notify)
                 self._deploy_ecs_log_backfill(client, _notify)
-                self._deploy_apm_anomaly_detection(client, _notify)
                 self._deploy_logs_ml_jobs(client, _notify)
                 self._deploy_slos(client, _notify)
+                self._install_integrations(client, _notify)
+                # Block on APM datafeed catch-up now; should be near-instant
+                # since ES has been training throughout the steps above.
+                self._finalize_apm_anomaly_detection(client, _notify)
+                # Spawn a background thread that waits for all services to appear
+                # in traces, then re-runs the SLO workflow to capture the full set.
+                # Returns immediately; never blocks or raises.
+                self._schedule_slo_refresh()
                 self._deploy_synthetics(client, _notify)
         except Exception as exc:
             self.progress.error = str(exc)
@@ -218,7 +286,7 @@ class ScenarioDeployer(
         results["knowledge_base"] = resp.status_code < 300
 
         # Delete audit indices and remediation queue
-        for suffix in ["significant-events-audit", "remediation-audit", "escalation-audit", "remediation-queue", "daily-report-audit"]:
+        for suffix in WORKFLOW_INDEX_SUFFIXES:
             client.delete(
                 f"{self.elastic_url}/{self.ns}-{suffix}",
                 headers=_es_headers(self.api_key),
@@ -257,6 +325,12 @@ class ScenarioDeployer(
         # Delete APM ML jobs and datafeeds
         self._cleanup_apm_ml(client)
         results["apm_ml_cleaned"] = True
+
+        # Delete APM rollup data streams (synthetic backfill) so the next
+        # deploy's ML job trains on a clean baseline rather than cumulative
+        # history including prior live fault periods.
+        self._cleanup_apm_rollup(client)
+        results["apm_rollup_cleaned"] = True
 
         # Delete SLOs
         results["slos_deleted"] = self._cleanup_slos(client)
@@ -393,7 +467,7 @@ class ScenarioDeployer(
                 _notify(progress)
                 try:
                     deleted = 0
-                    for suffix in ["significant-events-audit", "remediation-audit", "escalation-audit", "remediation-queue", "daily-report-audit"]:
+                    for suffix in WORKFLOW_INDEX_SUFFIXES:
                         r = client.delete(
                             f"{self.elastic_url}/{self.ns}-{suffix}",
                             headers=_es_headers(self.api_key),
@@ -430,9 +504,10 @@ class ScenarioDeployer(
                 _notify(progress)
                 try:
                     self._cleanup_apm_ml(client)
+                    self._cleanup_apm_rollup(client)
                     self._cleanup_aiops_ml(client)
                     step.status = "ok"
-                    step.detail = "APM and AIOps ML jobs and datafeeds removed"
+                    step.detail = "APM and AIOps ML jobs, datafeeds, and rollup data removed"
                 except Exception as exc:
                     step.status = "failed"
                     step.detail = str(exc)
@@ -535,7 +610,7 @@ class ScenarioDeployer(
         return self.progress.steps[idx]
 
     def _check_connectivity(self, client: httpx.Client, notify: ProgressCallback):
-        step = self._step(0)
+        step = self._step(StepIdx.CONNECTIVITY_CHECK)
         step.status = "running"
         notify(self.progress)
 
@@ -546,25 +621,34 @@ class ScenarioDeployer(
             step.detail = f"Elasticsearch unreachable (HTTP {resp.status_code})"
             raise RuntimeError(step.detail)
 
-        # Kibana
+        # Kibana — also cache build_flavor and version for _is_serverless() /
+        # _kibana_version_ge() used by later steps.
         resp = client.get(f"{self.kibana_url}/api/status", headers=_kibana_headers(self.api_key))
         if resp.status_code >= 300:
             step.detail = f"Kibana may be unavailable (HTTP {resp.status_code}), continuing..."
         else:
+            try:
+                v = resp.json().get("version", {})
+                self._kibana_env = (
+                    v.get("build_flavor", ""),
+                    v.get("number", ""),
+                )
+            except Exception:
+                pass
             step.detail = "ES + Kibana reachable"
 
         step.status = "ok"
         notify(self.progress)
 
     def _report_elastic_url_step(self, notify: ProgressCallback):
-        step = self._step(1)
+        step = self._step(StepIdx.ES_URL)
         step.status = "ok"
         step.detail = f"ES: {self.elastic_url}"
         notify(self.progress)
 
     def _cleanup_all_scenarios_step(self, client: httpx.Client, notify: ProgressCallback):
         """Deploy step: clean up current scenario artifacts before redeploying."""
-        step = self._step(3)
+        step = self._step(StepIdx.CLEANUP)
         step.status = "running"
         notify(self.progress)
 

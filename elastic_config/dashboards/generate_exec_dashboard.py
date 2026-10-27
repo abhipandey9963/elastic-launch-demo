@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Generate Kibana dashboard NDJSON (compatible with Kibana 9.4+).
+Generate Kibana dashboard NDJSON (compatible with Kibana 9.4+/9.5).
 
 Can be used as:
   - Importable function: generate_dashboard_ndjson(scenario) -> str
@@ -11,10 +11,10 @@ Primary output: **Systems Operations Dashboard** (saved object id `{namespace}-e
 
 Also emits a second saved object, **Executive Dashboard** (id `{namespace}-business-exec-dashboard`),
 when the scenario defines `executive_kpi_emitter_service_name`. Synthetic `business.*` OTLP gauges
-are emitted once per cycle from that service (`scenarios/{name}/executive_kpis.py`).
+are emitted once per cycle from that service via the telemetry DSL executor.
 
 Produces by-value Lens panels using the formBased datasource format that matches
-the built-in [OTel] dashboards shipped with Kibana 9.4, including all required
+the built-in [OTel] dashboards shipped with Kibana 9.4+/9.5, including all required
 fields: ignoreGlobalFilters, incompleteColumns, sampling, adHocDataViews,
 internalReferences, legend, valueLabels.
 
@@ -70,10 +70,40 @@ def make_ref(data_view_id, layer_id):
     }
 
 
+def _tag_saved_object(namespace: str) -> str:
+    """Return an NDJSON line for a Kibana 'tag' saved object keyed by namespace.
+
+    The tag is co-imported alongside each dashboard so Kibana can show it in
+    the tag filter. Using a stable ``id`` of ``tag-{namespace}`` makes the
+    import idempotent (overwrite=true replaces it on re-deploy).
+    """
+    obj = {
+        "attributes": {
+            "color": "#0077CC",
+            "description": f"Scenario: {namespace}",
+            "name": namespace,
+        },
+        "id": f"tag-{namespace}",
+        "managed": False,
+        "references": [],
+        "type": "tag",
+    }
+    return json.dumps(obj, separators=(",", ":"))
+
+
+def _tag_ref(namespace: str) -> dict:
+    """Return a saved-object reference that associates a dashboard with the scenario tag."""
+    return {
+        "id": f"tag-{namespace}",
+        "name": "tag-ref-scenario",
+        "type": "tag",
+    }
+
+
 # ── Layer / state / panel builders ─────────────────────────────────────────
 
 def make_layer(layer_id, column_order, columns, index_pattern_id=None):
-    """Build a formBased layer with all Kibana 9.4 required fields."""
+    """Build a formBased layer with all Kibana 9.4+/9.5 required fields."""
     layer = {
         "columnOrder": column_order,
         "columns": columns,
@@ -306,13 +336,10 @@ def make_metric_palette(thresholds):
 
 
 # ── Threshold palettes for metric tiles ───────────────────────────────────────
-# Green → Yellow → Red as values climb
-PALETTE_ERRORS = make_metric_palette([
-    ("#54B399", 2),     # green: 0-2 errors
-    ("#D6BF57", 5),     # yellow: 2-5 errors
-    ("#E7664C", 9999),  # red: 5+ errors
-])
-
+# Green → Yellow → Red as values climb.
+# Service health tiles use error *rate* (not absolute count) so the ~3%
+# baseline stays green while chaos-affected services (~70%) go yellow/red,
+# independent of time-window volume.
 PALETTE_ERROR_RATE = make_metric_palette([
     ("#54B399", 0.12),  # green: 0-12%
     ("#D6BF57", 0.20),  # yellow: 12-20%
@@ -344,6 +371,74 @@ PALETTE_CPU = make_metric_palette([
 ])
 
 
+# ── Data-driven palettes for executive business KPI tiles ─────────────────────
+# Business KPIs (business.*) don't have hand-tuned palettes per metric — instead
+# thresholds are derived from each KPI's own nominal range (executive_kpi_emissions
+# `value:` spec), so a fault that pushes a KPI's factor/value outside its normal
+# band is the only thing that ever triggers yellow/red.
+
+# Substrings that mark a KPI as "lower raw value is better" (errors, latency,
+# deviation-style metrics). Anything not matched defaults to "higher is better"
+# (revenue, conversion, uptime, success-rate style metrics). This is a heuristic,
+# not a per-KPI declaration — asymmetric metrics (e.g. schedule_variance_days,
+# where negative is actually good) won't be perfectly modeled, but the resulting
+# tile is still far more useful than a single static color.
+_LOWER_IS_BETTER_KEYWORDS = (
+    "cancel", "return", "churn", "complaint", "chargeback", "aml_flag",
+    "regulatory_breach", "risk", "deviation", "drift", "variance",
+    "packet_loss", "latency", "downtime", "delay", "backlog", "error",
+    "incident", "defect", "dispute", "delinquen", "fraud_loss",
+    "fault_events", "bounce_rate", "failed", "outage", "breach",
+)
+
+
+def _kpi_is_lower_better(kpi_name: str) -> bool:
+    return any(kw in kpi_name for kw in _LOWER_IS_BETTER_KEYWORDS)
+
+
+def _kpi_nominal_range(value_spec) -> "tuple[float, float] | None":
+    """Extract (lo, hi) from a KPI's `value:` DSL spec, or None if not derivable."""
+    if not isinstance(value_spec, dict):
+        return None
+    bounds = value_spec.get("uniform") or value_spec.get("randint")
+    if not bounds or len(bounds) != 2:
+        return None
+    lo, hi = float(bounds[0]), float(bounds[1])
+    return (lo, hi) if hi > lo else None
+
+
+def kpi_palette(kpi_name: str, value_spec) -> "dict | None":
+    """Derive a green/yellow/red palette from a KPI's own nominal range.
+
+    Returns None when the range can't be derived (e.g. a `choice` spec) so
+    callers can fall back to a flat color rather than a misleading palette.
+    """
+    bounds = _kpi_nominal_range(value_spec)
+    if bounds is None:
+        return None
+    lo, hi = bounds
+    span = hi - lo
+    sentinel = max(hi, lo) * 4 + 1_000_000  # comfortably above any degraded/inflated value
+
+    if _kpi_is_lower_better(kpi_name):
+        # Nominal band (up to hi) is green; a fault pushing the raw value
+        # above hi (e.g. more errors, more drift) turns the tile yellow/red.
+        return make_metric_palette([
+            ("#54B399", hi + 0.05 * span),
+            ("#D6BF57", hi + 0.30 * span),
+            ("#E7664C", sentinel),
+        ])
+    # Higher-is-better: nominal band (from lo up) is green; a fault dragging
+    # the value below lo (e.g. lower conversion, lower uptime) turns it red.
+    # Clamp to 0 since business KPIs are non-negative and palette stops must
+    # stay within the (rangeMin=0) range Kibana expects.
+    return make_metric_palette([
+        ("#E7664C", max(0.0, lo - 0.30 * span)),
+        ("#D6BF57", max(0.0, lo - 0.05 * span)),
+        ("#54B399", sentinel),
+    ])
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Main generation function
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -367,11 +462,16 @@ def generate_dashboard_ndjson(scenario) -> str:
         for ch in scenario.channel_registry.values()
     ]
 
+    # The tag saved object must be co-imported so Kibana knows the tag exists
+    # before the dashboards reference it.  Using a stable id (tag-{namespace})
+    # makes repeated imports idempotent (overwrite=true replaces the object).
+    tag_line = _tag_saved_object(namespace) + "\n"
+
     main = _build_dashboard_ndjson(
         scenario_name, namespace, cloud_groups, dashboard_id, error_types
     )
     biz = _build_business_executive_dashboard_ndjson(scenario)
-    return main + biz if biz else main
+    return tag_line + main + biz if biz else tag_line + main
 
 
 def _build_dashboard_ndjson(
@@ -382,8 +482,12 @@ def _build_dashboard_ndjson(
     error_types: "list[str] | None" = None,
 ) -> str:
     """Build the full dashboard NDJSON from parameters."""
-    # Override the module-level constant so panels reference the deployed data view
+    # Override module-level constants so every panel references the deployed,
+    # scenario-namespaced data views rather than the shared literal IDs.
+    # (deployer_views.py creates these with the same IDs so they always match.)
     DATA_VIEW_ID_LOGS = f"logs.otel.{namespace}"
+    DATA_VIEW_ID_TRACES = f"traces.otel.{namespace}"
+    DATA_VIEW_ID_METRICS = f"metrics.otel.{namespace}"
 
     TILE_WIDTH = 5
 
@@ -415,7 +519,7 @@ def _build_dashboard_ndjson(
             "gridData": {"h": 14, "i": pid, "w": 1, "x": sep_x, "y": 0},
         })
 
-    # Row 1 (y=2, h=6): 9 Service Health Tiles
+    # Row 1 (y=2, h=6): 9 Service Health Tiles (error rate per service)
     tile_idx = 0
     for group in cloud_groups:
         for svc_offset, svc_name in enumerate(group["services"]):
@@ -423,16 +527,16 @@ def _build_dashboard_ndjson(
             pid = f"p_svc_{tile_idx}"
             lid = uid()
             cid = uid()
-            kql = f'resource.attributes.service.name: "{svc_name}" AND status.code: Error'
-            columns = {cid: col_count(label="Errors", kql_filter=kql)}
+            svc_query = f'resource.attributes.service.name: "{svc_name}"'
+            columns = {cid: col_formula("count(kql='status.code: Error') / count()", "Error Rate")}
             layer = make_layer(lid, [cid], columns, DATA_VIEW_ID_TRACES)
             state = make_state(layer, {
                 "layerId": lid,
                 "layerType": "data",
                 "metricAccessor": cid,
-                "palette": PALETTE_ERRORS,
+                "palette": PALETTE_ERROR_RATE,
                 "subtitle": svc_name,
-            })
+            }, query=svc_query)
             x = group["x_start"] + svc_offset * TILE_WIDTH
             w = TILE_WIDTH if svc_offset < 2 else (group["col_width"] - 2 * TILE_WIDTH)
             panels.append(make_panel(
@@ -512,7 +616,7 @@ def _build_dashboard_ndjson(
         "layerType": "data",
         "metricAccessor": cid,
         "palette": PALETTE_LATENCY_P99,
-        "subtitle": "nanoseconds",
+        "subtitle": "response time",
     })
     panels.append(make_panel("p30",
         {"h": 6, "i": "p30", "w": 12, "x": 0, "y": 16},
@@ -528,7 +632,7 @@ def _build_dashboard_ndjson(
         "layerType": "data",
         "metricAccessor": cid,
         "palette": PALETTE_LATENCY_P50,
-        "subtitle": "nanoseconds",
+        "subtitle": "response time",
     })
     panels.append(make_panel("p31",
         {"h": 6, "i": "p31", "w": 12, "x": 12, "y": 16},
@@ -1171,6 +1275,9 @@ def _build_dashboard_ndjson(
                 all_refs.append(ref)
                 seen_ref_names.add(ref["name"])
 
+    # Add the scenario tag reference so the dashboard appears under the namespace tag
+    all_refs.append(_tag_ref(namespace))
+
     # ── Build the dashboard saved object ─────────────────────────────────────
 
     dashboard = {
@@ -1213,8 +1320,16 @@ def _build_business_executive_dashboard_ndjson(scenario) -> str:
     scenario_name = scenario.scenario_name
     namespace = scenario.namespace
     dashboard_id = f"{namespace}-business-exec-dashboard"
+    DATA_VIEW_ID_METRICS = f"metrics.otel.{namespace}"  # noqa: F841 — shadows module-level constant
     svc_kql = f'resource.attributes.service.name: "{svc}"'
     intro = scenario.executive_dashboard_intro
+
+    # KPI name (e.g. "business.mission_success_probability_pct") -> nominal
+    # `value:` spec, used to derive a fault-aware palette per tile below.
+    kpi_value_spec_by_name = {
+        kpi["name"]: kpi.get("value")
+        for kpi in getattr(scenario, "_kpi_emissions", [])
+    }
 
     panels: list[dict] = []
 
@@ -1223,14 +1338,19 @@ def _build_business_executive_dashboard_ndjson(scenario) -> str:
         cid = uid()
         columns = {cid: col_average(source_field, label=title)}
         layer = make_layer(lid, [cid], columns, DATA_VIEW_ID_METRICS)
+        # source_field looks like "metrics.business.foo_pct"; the KPI's own
+        # name (as declared in executive_kpi_emissions) drops the "metrics." prefix.
+        kpi_name = source_field.removeprefix("metrics.")
+        palette = kpi_palette(kpi_name, kpi_value_spec_by_name.get(kpi_name))
+        metric_style = {"palette": palette} if palette else {"color": "#00BFB3"}
         state = make_state(
             layer,
             {
                 "layerId": lid,
                 "layerType": "data",
                 "metricAccessor": cid,
-                "color": "#00BFB3",
                 "subtitle": svc,
+                **metric_style,
             },
             query=svc_kql,
         )
@@ -1352,6 +1472,9 @@ def _build_business_executive_dashboard_ndjson(scenario) -> str:
                 all_refs.append(ref)
                 seen_ref_names.add(ref["name"])
 
+    # Add the scenario tag reference so the dashboard appears under the namespace tag
+    all_refs.append(_tag_ref(namespace))
+
     dashboard = {
         "attributes": {
             "description": intro,
@@ -1386,7 +1509,7 @@ if __name__ == "__main__":
     import sys
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-    from scenarios import get_scenario
+    from scenario_engine import get_scenario
 
     scenario_id = sys.argv[1] if len(sys.argv) > 1 else "space"
     scenario = get_scenario(scenario_id)

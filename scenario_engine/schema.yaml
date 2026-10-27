@@ -1,0 +1,69 @@
+# Scenario schema version registry.
+#
+# current            — the schema version all bundled scenarios ship at.
+# default_unversioned — a scenario.yaml with no schema_version key is treated
+#                      as this version (same MAJOR as current, so it is
+#                      "outdated_compatible", never "upgrade_required").
+# migrations         — ordered list of schema transitions.  Each entry describes
+#                      what changed and how to apply it.  The upgrade-scenario
+#                      skill walks this list to bring any scenario up to current.
+#
+# Migration entry fields:
+#   to        (str)  — the version this migration produces
+#   breaking  (bool) — true → MAJOR bump (scenario is "upgrade_required" and
+#                      its Launch button is disabled until migrated);
+#                      false → MINOR bump (scenario still runs, just "outdated_compatible")
+#   summary   (str)  — one-line description shown in the version status table
+#   guidance  (str)  — step-by-step instructions the skill follows when applying
+#                      this migration to a scenario folder
+#   needs_input (bool) — true → skill must AskUserQuestion to gather a value
+#                        before it can apply this migration
+
+current: "1.2"
+default_unversioned: "1.0"
+
+migrations:
+  - to: "1.1"
+    breaking: false
+    summary: "Add the schema_version field to scenario.yaml"
+    guidance: |
+      Add a top-level `schema_version: "1.1"` key to scenario.yaml, immediately
+      after the `sort_order` line (or after `scenario_icon` if sort_order is
+      absent). No other edits are required. This is the only structural
+      difference between an unversioned (1.0) scenario and a 1.1 scenario.
+    needs_input: false
+
+  - to: "1.2"
+    breaking: false
+    summary: "Add business_impact blocks to all channel YAMLs so executive KPIs react to faults"
+    guidance: |
+      For each file in `channels/NN-<slug>.yaml`, add an optional top-level
+      `business_impact:` list mapping this fault to 2–4 semantically related
+      KPIs from `scenario.yaml`'s `executive_kpi_emissions:` list.
+
+      Each entry must be one of:
+
+        # factor form (preferred) — multiplies the nominal random draw:
+        - kpi: business.<metric_name>
+          factor: {uniform: [lo, hi]}   # <1 degrades revenue/orders/conversion;
+                                         # >1 inflates cancel_rate/churn/returns
+
+        # value form — absolute degraded range replacing the nominal draw:
+        - kpi: business.<metric_name>
+          value: {uniform: [lo, hi], round: n}
+
+      Guidelines for choosing impacts:
+        - Match the channel's `subsystem` and `affected_services` to KPIs that
+          would realistically be affected. Example: a checkout/payment fault →
+          business.conversion_rate_pct (down), business.orders_placed_per_min (down),
+          business.cancel_rate_pct (up).
+        - Down-KPIs (factor < 1): revenue, gmv, conversion_rate, orders, sessions,
+          page_views, fulfillment_sla, csat, nps, same_day_eligible.
+        - Up-KPIs (factor > 1): cancel_rate, returns, churn_risk, error_* metrics.
+        - Use 2–4 impacts per channel for legibility. Not every KPI needs to move.
+        - Channels unrelated to business outcomes (infra/network-only) can omit
+          `business_impact:` entirely; the emitter treats absence as nominal.
+
+      Finally, bump `schema_version` in `scenario.yaml` from "1.1" to "1.2"
+      (or add it as "1.2" if the field was absent).
+    needs_input: false

@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 
 import httpx
 
-from elastic_config.deployer_base import _kibana_headers, _retry_http, ProgressCallback
+from elastic_config.deployer_base import ProgressCallback, StepIdx, _kibana_headers, _retry_http
 
 if TYPE_CHECKING:
     from scenarios.base import BaseScenario
@@ -49,7 +49,7 @@ class SyntheticsMixin:
 
     def _deploy_synthetics(self, client: httpx.Client, notify: ProgressCallback):
         """Create Synthetics HTTP monitors for the FCC portals."""
-        step = self._step(18)
+        step = self._step(StepIdx.SYNTHETICS)
         step.status = "running"
         notify(self.progress)
 

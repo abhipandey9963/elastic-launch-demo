@@ -16,9 +16,32 @@ from app.trace_context import _trace_context_store
 
 logger = logging.getLogger("nova7.services")
 
+# Module-level topology cache — built once per scenario_id so all ~37 service
+# constructors share the same deterministic host/pod/container identifiers without
+# re-running the RNG sequence on each instantiation.
+_topology_cache: dict[str, dict] = {}
+
+
+def _scenario_topology(ctx) -> dict:
+    """Return (cached) infra_topology for the given ScenarioContext."""
+    topo = _topology_cache.get(ctx.scenario_id)
+    if topo is None:
+        from log_generators.infra_topology import build_topology
+
+        topo = build_topology(
+            {
+                "hosts": ctx.scenario.hosts,
+                "k8s_clusters": ctx.scenario.k8s_clusters,
+                "services": ctx.services,
+                "namespace": ctx.namespace,
+            }
+        )
+        _topology_cache[ctx.scenario_id] = topo
+    return topo
+
 
 def _get_scenario():
-    from scenarios import get_scenario
+    from scenario_engine import get_scenario
 
     return get_scenario(ACTIVE_SCENARIO)
 
@@ -64,10 +87,28 @@ class BaseService(ABC):
             self._mission_id = MISSION_ID
             self._namespace = "nova7"
 
+        # Derive topology-based infra attributes so that logs, per-service metrics,
+        # and single-span traces carry the same host.name / container.id / k8s.pod.*
+        # join keys as the trace, JVM-metrics, and k8s-metrics generators.  This is
+        # what makes APM failed-transaction correlation → Logs → Infrastructure
+        # resolve end-to-end without leaving any signal on a synthetic "{svc}-host".
+        infra_attrs: dict | None = None
+        if self._ctx:
+            from log_generators.infra_topology import get_resource_attrs
+
+            topo = _scenario_topology(self._ctx)
+            infra_attrs = dict(get_resource_attrs(topo, self.SERVICE_NAME))
+            # Mirror the trace path: for k8s services, set service.instance.id to
+            # the pod uid so APM instance grouping is consistent across all signals.
+            entry = topo.get(self.SERVICE_NAME) or {}
+            if entry.get("_service_instance_id"):
+                infra_attrs["service.instance.id"] = entry["_service_instance_id"]
+
         self.resource = OTLPClient.build_resource(
             self.SERVICE_NAME,
             self.service_cfg,
             namespace=self._namespace,
+            infra_attrs=infra_attrs,
         )
 
         # Derive nominal label from scenario (space="NOMINAL", others="NORMAL")
@@ -184,11 +225,19 @@ class BaseService(ABC):
         message: str,
         extra_attrs: dict[str, Any] | None = None,
         event_name: str | None = None,
+        channel: int | None = None,
     ) -> None:
         attrs = self._base_log_attrs()
         if extra_attrs:
             attrs.update(extra_attrs)
-        trace_id, span_id = _trace_context_store.get(self.SERVICE_NAME)
+        # Prefer the per-channel error trace context when a channel is supplied
+        # (so fault logs link to an actual error trace, not last-seen-per-service).
+        trace_id: str | None = None
+        span_id: str | None = None
+        if channel is not None:
+            trace_id, span_id = _trace_context_store.get_for_channel(channel, self.SERVICE_NAME, namespace=self._namespace)
+        if not trace_id:
+            trace_id, span_id = _trace_context_store.get(self.SERVICE_NAME, namespace=self._namespace)
         record = self.otlp.build_log_record(
             severity=level,
             body=message,
@@ -293,7 +342,7 @@ class BaseService(ABC):
                         "deployment_id": self._ctx.scenario_id if self._ctx else "",
                     }
                 )
-            self.emit_log("ERROR", msg, attrs, event_name=ev_name)
+            self.emit_log("ERROR", msg, attrs, event_name=ev_name, channel=channel)
 
     def emit_cascade_logs(self, channel: int) -> None:
         """Emit warning logs for cascading effects (not matching the SE query)."""
@@ -314,7 +363,54 @@ class BaseService(ABC):
                 "system.status": "WARNING",
             }
         )
-        self.emit_log("WARN", random.choice(messages), attrs)
+        self.emit_log("WARN", random.choice(messages), attrs, channel=channel)
+
+    def emit_infrastructure_events(self, channel: int) -> None:
+        """Emit one-shot infrastructure/audit events when a channel fires.
+
+        Reads optional 'infrastructure_events' list from channel_registry entry.
+        Each event: {body, severity, event_name, attributes, service (optional)}.
+        Events are only emitted once per channel activation.
+        """
+        if not hasattr(self, "_infra_events_emitted"):
+            self._infra_events_emitted: set[tuple[int, int]] = set()
+
+        ch = self._channel_registry.get(channel)
+        if not ch:
+            return
+        infra_events = ch.get("infrastructure_events", [])
+        if not infra_events:
+            return
+
+        for idx, evt in enumerate(infra_events):
+            # Only emit for this service (or if no service filter specified)
+            evt_service = evt.get("service")
+            if evt_service and evt_service != self.SERVICE_NAME:
+                continue
+
+            key = (channel, idx)
+            if key in self._infra_events_emitted:
+                continue
+            self._infra_events_emitted.add(key)
+
+            attrs = self._base_log_attrs()
+            if evt.get("attributes"):
+                attrs.update(evt["attributes"])
+            attrs["chaos.channel"] = channel
+            attrs["infrastructure.event"] = True
+
+            self.emit_log(
+                evt.get("severity", "WARN"),
+                evt["body"],
+                attrs,
+                event_name=evt.get("event_name"),
+                channel=channel,
+            )
+
+    def reset_infrastructure_events(self) -> None:
+        """Clear tracked infrastructure events (call on channel resolve)."""
+        if hasattr(self, "_infra_events_emitted"):
+            self._infra_events_emitted.clear()
 
     def emit_infrastructure_events(self, channel: int) -> None:
         """Emit one-shot infrastructure/audit events when a channel fires.

@@ -1,0 +1,63 @@
+name: Customer Session Timeout
+subsystem: client_services
+vehicle_section: portal_gateway
+error_type: PORTAL-SESSION-TIMEOUT
+sensor_type: session_manager
+affected_services:
+- customer-portal
+- order-gateway
+cascade_services:
+- audit-logger
+description: Customer trading sessions expiring mid-transaction causing order failures
+investigation_notes: |-
+  1. Check customer-portal logs for PORTAL-SESSION-TIMEOUT — note session_id, user_id, idle time, and the in-progress operation at the time of expiry.
+  2. Query FROM logs.otel.financial.* | WHERE body.text LIKE "*PORTAL-SESSION-TIMEOUT*" | STATS count() BY operation to find which workflow triggers the most mid-session timeouts.
+  3. Inspect order-gateway for orders cancelled on disconnect — confirm the cancel reason is logged as SESSION_EXPIRED for each pending_orders count.
+  4. Check audit-logger for the SSO/SAML heartbeat failures preceding the timeout — a missing heartbeat often indicates upstream IdP latency rather than idle user.
+  5. Investigate whether session max-age (900s) is too short for the affected operation; if order_submit or position_close operations regularly exceed 900s, request a session extension policy review.
+remediation_action: extend_session_idle_timeout_for_trading_ops
+error_message: '[PORTAL] PORTAL-SESSION-TIMEOUT: session={session_id} user={user_id} idle={session_age_s}s max=900s operation={operation}'
+stack_trace: |-
+  === SESSION DETAILS ===
+  session={session_id}  user={user_id}
+    created=14:02:17Z  last_activity=14:17:42Z  idle={session_age_s}s  max=900s
+    ip=10.2.0.47  user_agent=Bloomberg-Terminal/2026.1
+    auth_method=SSO/SAML  mfa=TOTP
+  --- PENDING OPERATIONS ---
+    operation={operation}  status=IN_PROGRESS
+    pending_orders={pending_orders}
+    unsaved_changes=true  last_heartbeat=892s_ago
+  --- IMPACT ---
+    orders_cancelled_on_disconnect={pending_orders}
+    portfolio_lock_released=true
+  ACTION: force_logout=true  cancel_pending=true  alert=PORTAL-SESSION-TIMEOUT
+correlation_attr: {}
+fault_params:
+  session_id:
+    format: "SESS-{n}"
+    n: {randint: [100000, 999999]}
+  user_id:
+    format: "USR-{n}"
+    n: {randint: [10000, 99999]}
+  session_age_s: {randint: [1800, 7200]}
+  operation: {choice: [order_submit, portfolio_view, position_close, margin_check]}
+  pending_orders: {randint: [1, 10]}
+rca_clues:
+  customer-portal:
+    portal.session_idle_age_s: {randint: [900, 7200]}
+    portal.cancelled_on_disconnect: {randint: [1, 10]}
+  order-gateway:
+    oms.session_expire_cancels: {randint: [1, 50]}
+    oms.in_progress_at_expiry: {randint: [1, 10]}
+  audit-logger:
+    audit.sso_heartbeat_failures: {randint: [1, 20]}
+    audit.session_force_logout_events: {randint: [1, 50]}
+business_impact:
+  - kpi: business.order_flow_per_min
+    factor: {uniform: [0.30, 0.60]}
+  - kpi: business.cancel_replace_rate_pct
+    factor: {uniform: [2.0, 4.5]}
+  - kpi: business.system_availability_pct
+    factor: {uniform: [0.88, 0.97]}
+  - kpi: business.ops_alerts_per_min
+    factor: {uniform: [2.0, 4.5]}

@@ -1,0 +1,66 @@
+name: Netting Calculation Error
+subsystem: settlement
+vehicle_section: netting_engine
+error_type: SETTLE-NETTING-CALC
+sensor_type: netting_integrity
+affected_services:
+- settlement-processor
+- risk-calculator
+cascade_services:
+- audit-logger
+- compliance-monitor
+description: Multilateral netting calculation produces inconsistent net obligations
+investigation_notes: |-
+  1. Check settlement-processor logs for SETTLE-NETTING-CALC — note batch_id, currency, net_mismatch amount, and counterparty_count.
+  2. Query FROM logs.otel.financial.* | WHERE body.text LIKE "*SETTLE-NETTING-CALC*" | STATS max(net_mismatch) BY batch_id to find the largest imbalanced batches.
+  3. Inspect the per-counterparty deliver/receive totals — any single counterparty with deliver != receive (when summed across all pairs) is the likely source of the mismatch.
+  4. Check audit-logger for late trade amendments submitted after the netting batch cutoff — these are frequently missed in the batch computation.
+  5. Recompute the batch with risk-calculator cross-validation before resubmitting to NSCC CNS; do not release the settlement hold until net_mismatch < $0.01.
+remediation_action: recompute_netting_batch
+error_message: '[SETTLE] SETTLE-NETTING-CALC: batch={batch_id} net_mismatch=${net_mismatch} counterparties={counterparty_count}
+  currency={currency}'
+stack_trace: |-
+  === NETTING BATCH SUMMARY ===
+  batch={batch_id}  currency={currency}  counterparties={counterparty_count}
+  COUNTERPARTY          DELIVER        RECEIVE       NET
+  Goldman Sachs         $42,300,000    $38,100,000   ($4,200,000)
+  Morgan Stanley        $31,500,000    $35,800,000    $4,300,000
+  JP Morgan             $28,700,000    $27,200,000   ($1,500,000)
+  Citadel Securities    $19,400,000    $21,800,000    $2,400,000
+  --- BALANCE CHECK ---
+    sum_delivers   $121,900,000
+    sum_receives   $122,900,000
+    mismatch       ${net_mismatch}  <<< NON-ZERO
+    tolerance      $0.01
+  reduction_pct=72.4%  expected_reduction=75.0%  NSCC_CNS=REJECTED
+  ACTION: recompute_batch=true  hold_settlement=true  alert=SETTLE-NETTING-CALC
+correlation_attr: {}
+fault_params:
+  batch_id:
+    format: "NET-{n}"
+    n: {randint: [1000, 9999]}
+  net_mismatch: {uniform: [10000, 5000000], round: 2}
+  counterparty_count: {randint: [3, 20]}
+  currency: {choice: [USD, EUR, GBP, JPY, CHF]}
+rca_clues:
+  settlement-processor:
+    settlement.net_mismatch_usd: {uniform: [10000, 5000000], round: 2}
+    settlement.nscc_cns_rejection_count: {randint: [1, 10]}
+  risk-calculator:
+    risk.netting_reduction_pct: {uniform: [60.0, 74.9], round: 1}
+    risk.counterparty_net_exposure_usd: {randint: [500000, 10000000]}
+  audit-logger:
+    audit.late_amendment_count: {randint: [1, 20]}
+    audit.post_cutoff_trade_changes: {randint: [0, 10]}
+  compliance-monitor:
+    compliance.netting_integrity_flags: {randint: [1, 5]}
+    compliance.batch_hold_duration_s: {randint: [60, 3600]}
+business_impact:
+  - kpi: business.settlement_success_rate_pct
+    factor: {uniform: [0.65, 0.88]}
+  - kpi: business.settlement_fails_in_queue
+    factor: {uniform: [2.0, 5.0]}
+  - kpi: business.reconciliation_breaks
+    factor: {uniform: [2.5, 6.0]}
+  - kpi: business.notional_value_usd_per_min
+    factor: {uniform: [0.30, 0.60]}

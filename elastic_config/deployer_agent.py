@@ -7,7 +7,7 @@ from typing import Any
 
 import httpx
 
-from elastic_config.deployer_base import _kibana_headers, ProgressCallback
+from elastic_config.deployer_base import _kibana_headers, ProgressCallback, StepIdx
 
 logger = logging.getLogger("deployer")
 
@@ -15,7 +15,7 @@ logger = logging.getLogger("deployer")
 class AgentMixin:
 
     def _deploy_tools(self, client: httpx.Client, notify: ProgressCallback):
-        step = self._step(9)
+        step = self._step(StepIdx.AI_TOOLS)
         step.status = "running"
         notify(self.progress)
 
@@ -30,7 +30,10 @@ class AgentMixin:
                     "type": "workflow",
                     "description": (
                         "Execute remediation actions for anomalies. Triggers the "
-                        "Remediation Action workflow to resolve faults."
+                        "Remediation Action workflow. Pass approval_mode (string): "
+                        "required for HITL / channels 1–15 (pauses at waitForInput); "
+                        "skip only for Significant Event Auto-Remediate. Pass "
+                        "dry_run: false to resolve the fault."
                     ),
                     "configuration": {"workflow_id": wf_id},
                 })
@@ -74,7 +77,7 @@ class AgentMixin:
         notify(self.progress)
 
     def _deploy_agent(self, client: httpx.Client, notify: ProgressCallback):
-        step = self._step(10)
+        step = self._step(StepIdx.AI_AGENT)
         step.status = "running"
         notify(self.progress)
 
@@ -173,7 +176,36 @@ class AgentMixin:
 - Use **{p_investigation}** for ES|QL investigation, field name guidance, and root cause analysis
 - Use **{p_channel_runbook}** to look up fault channel procedures or identify the remediation action_type
 - Use **{p_remediation_guide}** before executing any remediation or escalation action
-- Use **visualization-creation** to create charts, graphs, or visual breakdowns of data
+
+## Creating Visualizations
+Use the **visualization-creation** tool to create Lens charts and dashboards. Always provide complete,
+specific parameters — vague requests will produce empty panels.
+
+**Data views** (always use these exact IDs):
+- Traces/APM: `traces.otel.{ns}`  — fields: `@timestamp`, `duration`, `status.code`,
+  `resource.attributes.service.name`, `span.name`, `trace.id`
+- Logs: `logs.otel.{ns}` — fields: `@timestamp`, `body.text`, `severity_text`, `service.name`,
+  `trace.id`, `span.id`
+- Metrics: `metrics.otel.{ns}` — fields: `@timestamp`, `metrics.k8s.node.cpu.utilization`,
+  `metrics.k8s.pod.memory.usage`, `metrics.system.cpu.load_average.1m`,
+  `metrics.system.filesystem.utilization`, `resource.attributes.k8s.cluster.name`,
+  `resource.attributes.service.name`, `host.name`
+
+**Proven visualization patterns**:
+- Error rate over time → bar_stacked on `traces.otel.{ns}`, x=`@timestamp` (30s), y=count with
+  `status.code: Error` filter, split by `resource.attributes.service.name`
+- P99 latency by service → area on `traces.otel.{ns}`, x=`@timestamp`, y=percentile(duration,99),
+  split by `resource.attributes.service.name`
+- Log volume → area on `logs.otel.{ns}`, x=`@timestamp` (30s), y=count, filter by `severity_text`
+- CPU utilization → metric tile on `metrics.otel.{ns}`, average of
+  `metrics.k8s.node.cpu.utilization`
+- Service health → metric tile on `traces.otel.{ns}`, error-rate formula
+  `count(kql='status.code: Error') / count()` filtered by
+  `resource.attributes.service.name: "<name>"`
+
+When asked to create a dashboard, always specify: data view ID, chart type, x-axis field with
+interval, y-axis metric, split field (if any), and any KQL filter. Ask for clarification only if
+the user's intent is genuinely ambiguous.
 
 ## Available Services
 {svc_names}"""

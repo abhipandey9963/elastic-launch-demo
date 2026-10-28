@@ -5,11 +5,12 @@ from __future__ import annotations
 import json
 import logging
 import os
+import zipfile
 from contextlib import asynccontextmanager
 from typing import Optional
 
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from app.config import (
@@ -88,7 +89,7 @@ async def lifespan(app: FastAPI):
     """On startup: restore active deployments from SQLite.  On shutdown: stop all."""
     from app.context import ScenarioContext
     from app.instance import ScenarioInstance
-    from scenarios import get_scenario
+    from scenario_engine import get_scenario
 
     # Restore previously active deployments
     for rec in store.get_all_active():
@@ -152,7 +153,82 @@ async def lifespan(app: FastAPI):
                     )
 
             def _auto_deploy():
-                result = _deployer.deploy_all(callback=_progress_cb)
+                # Shared state between the early-start hook and the post-deploy
+                # fallback path.  Using a dict avoids nonlocal rebinding issues.
+                _state: dict = {"started": False, "instance": None, "endpoint": None}
+
+                def _on_otlp_ready(early_endpoint: str) -> None:
+                    """Start telemetry emission as soon as OTLP endpoint is known.
+
+                    Fires from within deploy_all() right after step 3
+                    (OTLP derivation), before the slow tail (ML, alerts, SLOs,
+                    integrations).  This means KPI gauges reach Elasticsearch
+                    minutes earlier and the executive dashboard tiles populate
+                    immediately when the operator opens it.
+                    """
+                    ep = OTLP_ENDPOINT or early_endpoint
+                    try:
+                        ctx = ScenarioContext.from_scenario(
+                            _scenario,
+                            otlp_endpoint=ep,
+                            otlp_api_key=api_key,
+                            elastic_url=elastic_url,
+                            elastic_api_key=api_key,
+                            kibana_url=kibana_url,
+                        )
+                        instance = ScenarioInstance(ctx, chaos_store=chaos_store)
+                        if ep:
+                            instance.otlp.reconfigure(ep, api_key)
+                        instance.start()
+                        registry.register(dep_id, instance)
+                        store.upsert(
+                            deployment_id=dep_id,
+                            scenario_id=s_id,
+                            otlp_endpoint=ep,
+                            otlp_api_key=api_key,
+                            elastic_url=elastic_url,
+                            elastic_api_key=api_key,
+                            kibana_url=kibana_url,
+                        )
+                        _state["started"] = True
+                        _state["instance"] = instance
+                        _state["endpoint"] = ep
+                        logger.info(
+                            "Auto-deploy: instance started early after OTLP derive (%s)",
+                            dep_id,
+                        )
+                    except Exception:
+                        logger.exception(
+                            "Auto-deploy: early start failed for %s; will retry after deploy_all",
+                            s_id,
+                        )
+
+                result = _deployer.deploy_all(
+                    callback=_progress_cb, on_otlp_ready=_on_otlp_ready
+                )
+
+                if _state["started"]:
+                    # Hook fired — instance is already running.
+                    # Reconfigure only if the final verified endpoint differs from
+                    # the early one (e.g. if OTLP_ENDPOINT env var wasn't set and
+                    # the deployer returned a different verified URL).
+                    final_endpoint = (
+                        OTLP_ENDPOINT or result.otlp_endpoint or _pre_derived_otlp
+                    )
+                    if final_endpoint and final_endpoint != _state["endpoint"]:
+                        inst = _state["instance"]
+                        if inst is not None:
+                            inst.otlp.reconfigure(final_endpoint, api_key)
+                            logger.info(
+                                "Auto-deploy: OTLP endpoint updated post-deploy for %s → %s",
+                                dep_id,
+                                final_endpoint,
+                            )
+                    logger.info("Auto-deploy complete: %s (%s)", dep_id, s_id)
+                    return
+
+                # Hook never fired (OTLP derivation failed or raised) — fall back
+                # to the original post-deploy start behavior.
                 # Priority: explicit env var → deployer-verified → pre-derived fallback
                 otlp_endpoint = OTLP_ENDPOINT or result.otlp_endpoint or _pre_derived_otlp
                 try:
@@ -250,7 +326,7 @@ def _get_scenario_for_deployment(deployment_id: Optional[str] = None):
     inst = _get_instance(deployment_id)
     if inst:
         return inst.ctx.scenario
-    from scenarios import get_scenario
+    from scenario_engine import get_scenario
 
     return get_scenario(ACTIVE_SCENARIO)
 
@@ -263,15 +339,13 @@ def _inject_theme(html: str, deployment_id: Optional[str] = None) -> str:
         mission_id = inst.ctx.mission_id
         kibana = inst.ctx.kibana_url or _get_default_creds()[1]
     else:
-        from scenarios import get_scenario
+        from scenario_engine import get_scenario
 
         scenario = get_scenario(ACTIVE_SCENARIO)
         mission_id = MISSION_ID
         kibana = _get_default_creds()[1]
 
     kibana_display = KIBANA_PROXY or kibana
-
-    theme = scenario.theme
 
     # Elastic brand CSS — light theme matching the home page. All chaos pages share
     # the same look regardless of scenario. Semantic status colors use Elastic palette.
@@ -327,10 +401,11 @@ body { font-family: 'Inter', -apple-system, system-ui, sans-serif; }"""
         "<!--THEME_CSS-->": f"<style>{css_override}</style>",
         "DEPLOYMENT_ID_PLACEHOLDER": deployment_id or "",
         "SCENARIO_NAME_PLACEHOLDER": scenario.scenario_name,
+        "SCENARIO_DESC_PLACEHOLDER": scenario.scenario_description,
         "SCENARIO_ID_PLACEHOLDER": scenario.scenario_id,
         "NAMESPACE_PLACEHOLDER": scenario.namespace,
         "MISSION_ID_PLACEHOLDER": mission_id,
-        "CHAOS_TITLE_PLACEHOLDER": theme.chaos_title,
+        "CHAOS_TITLE_PLACEHOLDER": "Incident Simulator",
         "KIBANA_URL_PLACEHOLDER": kibana_display,
         "CHANNEL_TIMEOUT_PLACEHOLDER": str(CHANNEL_TIMEOUT),
         "REVENUE_DASHBOARD_CARD_PLACEHOLDER": revenue_dashboard_card,
@@ -374,6 +449,13 @@ def _derive_elastic_url(kibana_url: str, api_key: str, explicit: str = "") -> st
             )
             if resp.status_code == 200:
                 items = resp.json().get("items", [])
+                # Prefer is_default (Serverless: name "Default output"); fall back to legacy name.
+                for item in items:
+                    if item.get("is_default"):
+                        hosts = item.get("hosts", [])
+                        if hosts:
+                            logger.info("Derived ES URL via Fleet API: %s", hosts[0])
+                            return hosts[0].rstrip("/")
                 for item in items:
                     if item.get("name") == "default":
                         hosts = item.get("hosts", [])
@@ -435,16 +517,82 @@ async def chaos_page(deployment_id: Optional[str] = None):
 @app.get("/api/scenarios")
 async def list_scenarios():
     """List all available scenarios."""
-    from scenarios import list_scenarios as _list
+    from scenario_engine import list_scenarios as _list
 
-    return _list()
+    return JSONResponse(_list(), headers={"Cache-Control": "no-store"})
+
+
+@app.post("/api/scenarios/reload")
+async def reload_scenarios():
+    """Re-scan scenarios/*/scenario.yaml and reload all scenarios from disk."""
+    from scenario_engine import reload_registry
+
+    return reload_registry()
+
+
+@app.get("/api/scenarios/{scenario_id}/download")
+async def download_scenario(scenario_id: str):
+    """Download a scenario folder as a zip archive named <scenario_id>.zip."""
+    from scenario_engine import export_scenario_zip
+
+    try:
+        data = export_scenario_zip(scenario_id)
+    except (KeyError, FileNotFoundError, ValueError) as exc:
+        return JSONResponse({"error": str(exc)}, status_code=404)
+    return Response(
+        content=data,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{scenario_id}.zip"'},
+    )
+
+
+@app.post("/api/scenarios/upload")
+async def upload_scenario(request: Request):
+    """Upload a scenario zip archive; overwrites an existing scenario with the same id."""
+    from scenario_engine import import_scenario_zip
+
+    body = await request.body()
+    try:
+        result = import_scenario_zip(body)
+    except (ValueError, zipfile.BadZipFile) as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    return result
+
+
+@app.post("/api/scenarios/fetch-github")
+async def fetch_github_scenarios(request: Request):
+    """Fetch all scenarios from a GitHub repo and import them.
+
+    The repo must have a top-level ``scenarios/`` directory that mirrors the
+    demo's own layout — one subfolder per scenario, each containing
+    ``scenario.yaml``.  All discovered scenarios are imported (overwriting any
+    existing scenario with the same id).
+
+    Request body JSON:
+        repo_url  (str, required) — https://github.com/<owner>/<repo>
+        token     (str, optional) — GitHub PAT for private repos; never stored
+    """
+    from scenario_engine import fetch_github_zipball, import_scenarios_from_archive
+
+    body = await request.json()
+    repo_url = (body.get("repo_url") or "").strip()
+    token = (body.get("token") or "").strip() or None
+
+    if not repo_url:
+        return JSONResponse({"error": "repo_url is required"}, status_code=400)
+
+    try:
+        data = fetch_github_zipball(repo_url, token)
+        result = import_scenarios_from_archive(data)
+    except (ValueError, zipfile.BadZipFile) as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    return result
 
 
 @app.get("/api/scenario")
 async def current_scenario(deployment_id: Optional[str] = None):
-    """Return active scenario metadata and theme."""
+    """Return active scenario metadata."""
     scenario = _get_scenario_for_deployment(deployment_id)
-    theme = scenario.theme
     return {
         "id": scenario.scenario_id,
         "name": scenario.scenario_name,
@@ -461,30 +609,6 @@ async def current_scenario(deployment_id: Optional[str] = None):
                 "description": v["description"],
             }
             for k, v in scenario.channel_registry.items()
-        },
-        "theme": {
-            "bg_primary": theme.bg_primary,
-            "bg_secondary": theme.bg_secondary,
-            "bg_tertiary": theme.bg_tertiary,
-            "accent_primary": theme.accent_primary,
-            "accent_secondary": theme.accent_secondary,
-            "text_primary": theme.text_primary,
-            "text_secondary": theme.text_secondary,
-            "text_accent": theme.text_accent,
-            "status_nominal": theme.status_nominal,
-            "status_warning": theme.status_warning,
-            "status_critical": theme.status_critical,
-            "chaos_title": theme.chaos_title,
-            "font_family": theme.font_family,
-            "font_mono": theme.font_mono,
-            "scanline_effect": theme.scanline_effect,
-            "glow_effect": theme.glow_effect,
-            "grid_background": theme.grid_background,
-            "gradient_accent": theme.gradient_accent,
-        },
-        "countdown": {
-            "enabled": scenario.countdown_config.enabled,
-            "start_seconds": scenario.countdown_config.start_seconds,
         },
     }
 
@@ -509,7 +633,7 @@ async def list_deployments():
                 "kibana_display_url": KIBANA_PROXY or inst.ctx.kibana_url,
             }
         )
-    return result
+    return JSONResponse(result, headers={"Cache-Control": "no-store"})
 
 
 @app.post("/api/deployments/{deployment_id}/stop")
@@ -539,7 +663,7 @@ async def remove_deployment(deployment_id: str):
 
 
 @app.post("/api/chaos/trigger")
-async def chaos_trigger(body: dict):
+async def chaos_trigger(request: Request, body: dict):
     deployment_id = body.get("deployment_id")
     inst = _get_instance(deployment_id)
     if not inst:
@@ -548,7 +672,7 @@ async def chaos_trigger(body: dict):
     mode = body.get("mode", "calibration")
     se_name = body.get("se_name", "")
     callback_url = body.get("callback_url", "")
-    user_email = body.get("user_email", "")
+    user_email = body.get("user_email", "") or request.headers.get("X-Forwarded-User", "") or os.environ.get("INSTRUQT_USER_EMAIL", "")
     session_id = body.get("session_id", "")
     result = inst.chaos_controller.trigger(
         channel,
@@ -641,48 +765,7 @@ async def system_status(deployment_id: Optional[str] = None):
         "services": inst.service_manager.get_all_status(),
         "generators": inst.service_manager.get_generator_status(),
         "chaos": inst.chaos_controller.get_status(),
-        "countdown": inst.service_manager.get_countdown(),
     }
-
-
-# ── Countdown Control ──────────────────────────────────────────────────────
-
-
-@app.post("/api/countdown/start")
-async def countdown_start(body: dict = {}):
-    inst = _get_instance(body.get("deployment_id") if body else None)
-    if not inst:
-        return JSONResponse(status_code=404, content={"error": "No active deployment"})
-    inst.service_manager.countdown_start()
-    return {"status": "started"}
-
-
-@app.post("/api/countdown/pause")
-async def countdown_pause(body: dict = {}):
-    inst = _get_instance(body.get("deployment_id") if body else None)
-    if not inst:
-        return JSONResponse(status_code=404, content={"error": "No active deployment"})
-    inst.service_manager.countdown_pause()
-    return {"status": "paused"}
-
-
-@app.post("/api/countdown/reset")
-async def countdown_reset(body: dict = {}):
-    inst = _get_instance(body.get("deployment_id") if body else None)
-    if not inst:
-        return JSONResponse(status_code=404, content={"error": "No active deployment"})
-    inst.service_manager.countdown_reset()
-    return {"status": "reset"}
-
-
-@app.post("/api/countdown/speed")
-async def countdown_speed(body: dict):
-    inst = _get_instance(body.get("deployment_id"))
-    if not inst:
-        return JSONResponse(status_code=404, content={"error": "No active deployment"})
-    speed = float(body.get("speed", 1.0))
-    inst.service_manager.countdown_set_speed(speed)
-    return {"status": "speed_set", "speed": speed}
 
 
 # ── Remediation endpoint (called by Elastic Workflow) ──────────────────────
@@ -827,7 +910,7 @@ async def env_creds_status():
 @app.post("/api/setup/test-connection")
 async def test_connection(body: dict):
     """Test connectivity to each component independently."""
-    from scenarios import get_scenario as _get_scenario_by_id
+    from scenario_engine import get_scenario as _get_scenario_by_id
     from elastic_config.deployer import ScenarioDeployer
     from elastic_config.deployer_base import _kibana_headers, _es_headers
     import httpx
@@ -894,7 +977,7 @@ async def launch_setup(body: dict):
     Runs in a background thread. After deployment, creates a ScenarioInstance
     and registers it in the registry + SQLite store.
     """
-    from scenarios import get_scenario as _get_scenario_by_id
+    from scenario_engine import get_scenario as _get_scenario_by_id
     from elastic_config.deployer import ScenarioDeployer
     from app.context import ScenarioContext
     from app.instance import ScenarioInstance
@@ -923,7 +1006,29 @@ async def launch_setup(body: dict):
     explicit_otlp = body.get("otlp_url") or ""
 
     scenario = _get_scenario_by_id(scenario_id)
-    deployer = ScenarioDeployer(scenario, elastic_url, kibana_url, api_key, KIBANA_PROXY)
+
+    # Schema-version guard: refuse to launch scenarios that require a breaking migration.
+    from scenario_engine.schema_version import version_status as _version_status, CURRENT_SCHEMA_VERSION as _current_sv
+    _sv_status = _version_status(getattr(scenario, "schema_version", None))
+    if _sv_status == "upgrade_required":
+        _sv = getattr(scenario, "schema_version", None) or "<unversioned>"
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error": (
+                    f"Scenario '{scenario_id}' has schema version {_sv!r} which is "
+                    f"incompatible with the current engine schema {_current_sv!r}. "
+                    "Run the upgrade-scenario skill to migrate it before launching."
+                )
+            },
+        )
+
+    cloud_api_key = (body.get("cloud_api_key") or "").strip()
+    deployer = ScenarioDeployer(
+        scenario, elastic_url, kibana_url, api_key,
+        kibana_proxy=KIBANA_PROXY,
+        cloud_api_key=cloud_api_key,
+    )
 
     # Use scenario_id as deployment_id
     deployment_id = scenario_id
@@ -948,8 +1053,74 @@ async def launch_setup(body: dict):
             except Exception as exc:
                 logger.warning("Error stopping old instance: %s", exc)
 
-        result = deployer.deploy_all(callback=_progress_cb)
+        # Shared state between the early-start hook and the post-deploy fallback.
+        _state: dict = {"started": False, "instance": None, "endpoint": None}
 
+        def _on_otlp_ready(early_endpoint: str) -> None:
+            """Start telemetry as soon as the OTLP endpoint is confirmed (step 3),
+            before the slow tail of deploy_all() runs.
+            """
+            ep = explicit_otlp or early_endpoint
+            try:
+                ctx = ScenarioContext.from_scenario(
+                    scenario,
+                    otlp_endpoint=ep,
+                    otlp_api_key=api_key,
+                    elastic_url=elastic_url,
+                    elastic_api_key=api_key,
+                    kibana_url=kibana_url,
+                )
+                instance = ScenarioInstance(ctx, chaos_store=chaos_store)
+                if ep:
+                    instance.otlp.reconfigure(ep, api_key)
+                    logger.info(
+                        "OTLPClient for %s reconfigured early to %s", scenario_id, ep
+                    )
+                instance.start()
+                registry.register(deployment_id, instance)
+                store.upsert(
+                    deployment_id=deployment_id,
+                    scenario_id=scenario_id,
+                    otlp_endpoint=ep,
+                    otlp_api_key=api_key,
+                    elastic_url=elastic_url,
+                    elastic_api_key=api_key,
+                    kibana_url=kibana_url,
+                    cloud_api_key=cloud_api_key,
+                )
+                _state["started"] = True
+                _state["instance"] = instance
+                _state["endpoint"] = ep
+                logger.info(
+                    "Launch: instance started early after OTLP derive (%s)", deployment_id
+                )
+            except Exception as exc:
+                logger.exception(
+                    "Launch: early start failed for %s; will retry after deploy_all",
+                    scenario_id,
+                )
+
+        result = deployer.deploy_all(
+            callback=_progress_cb, on_otlp_ready=_on_otlp_ready
+        )
+
+        if _state["started"]:
+            # Hook fired — instance is already running.
+            # Reconfigure only if the final endpoint differs from the early one.
+            final_endpoint = explicit_otlp or result.otlp_endpoint
+            if final_endpoint and final_endpoint != _state["endpoint"]:
+                inst = _state["instance"]
+                if inst is not None:
+                    inst.otlp.reconfigure(final_endpoint, api_key)
+                    logger.info(
+                        "OTLPClient for %s updated post-deploy to %s",
+                        scenario_id,
+                        final_endpoint,
+                    )
+            logger.info("Deployment %s (%s) live", deployment_id, scenario_id)
+            return
+
+        # Hook never fired — fall back to original post-deploy start behavior.
         # Use explicit OTLP override if provided, otherwise use derived
         otlp_endpoint = explicit_otlp or result.otlp_endpoint
 
@@ -984,6 +1155,7 @@ async def launch_setup(body: dict):
                 elastic_url=elastic_url,
                 elastic_api_key=api_key,
                 kibana_url=kibana_url,
+                cloud_api_key=cloud_api_key,
             )
 
             logger.info("Deployment %s (%s) live", deployment_id, scenario_id)

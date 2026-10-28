@@ -16,7 +16,7 @@ from typing import Any
 
 import httpx
 
-from elastic_config.deployer_base import _es_headers, ProgressCallback
+from elastic_config.deployer_base import _es_headers, ConcurrentBulkIndexer, ProgressCallback, StepIdx
 
 logger = logging.getLogger("deployer")
 
@@ -30,10 +30,6 @@ _BULK_BATCH_DOCS = 500
 
 class BackfillMixin:
 
-    def _ecs_log_backfill_step_index(self) -> int:
-        """Sub-classes can override if step layout shifts. Default: step 15."""
-        return 15
-
     def _deploy_ecs_log_backfill(self, client: httpx.Client, notify: ProgressCallback):
         """Bulk-index ~12h of synthetic raw ECS access logs to
         `logs-ecs.{ns}-default` so log-rate analysis and categorization have
@@ -45,7 +41,7 @@ class BackfillMixin:
             generate_record,
         )
 
-        step = self._step(self._ecs_log_backfill_step_index())
+        step = self._step(StepIdx.ECS_LOG_BACKFILL)
         step.status = "running"
         notify(self.progress)
 
@@ -78,56 +74,24 @@ class BackfillMixin:
             spike_windows = plan_backfill_spike_windows(start, now, rng=rng)
             interval = 1.0 / _BACKFILL_AVG_LINES_PER_SEC
 
-            headers = {
-                "Content-Type": "application/x-ndjson",
-                "Authorization": f"ApiKey {self.api_key}",
-            }
-
-            sent = 0
-            batch: list[str] = []
-            ts = start
-            while ts < now:
-                spike_active = is_in_spike_window(ts, spike_windows)
-                docs_this_step = SPIKE_VOLUME_MULTIPLIER if spike_active else 1
-                for _ in range(docs_this_step):
-                    doc = generate_record(
-                        profile, ns, rng,
-                        ts=ts,
-                        spike_active=spike_active,
-                        spike_country=spike_country,
-                    )
-                    batch.append('{"create":{}}')
-                    batch.append(json.dumps(doc, separators=(",", ":")))
-                if len(batch) >= _BULK_BATCH_DOCS * 2:
-                    body = "\n".join(batch) + "\n"
-                    resp = client.post(
-                        f"{self.elastic_url}/{data_stream}/_bulk",
-                        headers=headers,
-                        content=body,
-                    )
-                    if resp.status_code >= 300:
-                        raise RuntimeError(
-                            f"ECS backfill bulk failed: HTTP {resp.status_code} "
-                            f"{resp.text[:300]}"
+            with ConcurrentBulkIndexer(
+                self.elastic_url, self.api_key, data_stream,
+                batch_size=_BULK_BATCH_DOCS, label="ecs-log",
+            ) as idx:
+                ts = start
+                while ts < now:
+                    spike_active = is_in_spike_window(ts, spike_windows)
+                    docs_this_step = SPIKE_VOLUME_MULTIPLIER if spike_active else 1
+                    for _ in range(docs_this_step):
+                        doc = generate_record(
+                            profile, ns, rng,
+                            ts=ts,
+                            spike_active=spike_active,
+                            spike_country=spike_country,
                         )
-                    sent += len(batch) // 2
-                    batch.clear()
-                ts += interval
-
-            # Flush remainder
-            if batch:
-                body = "\n".join(batch) + "\n"
-                resp = client.post(
-                    f"{self.elastic_url}/{data_stream}/_bulk",
-                    headers=headers,
-                    content=body,
-                )
-                if resp.status_code >= 300:
-                    raise RuntimeError(
-                        f"ECS backfill bulk (tail) failed: HTTP {resp.status_code} "
-                        f"{resp.text[:300]}"
-                    )
-                sent += len(batch) // 2
+                        idx.add(doc)
+                    ts += interval
+                sent = idx.flush()
 
             step.status = "ok"
             step.detail = f"Backfilled ~{sent} docs into {data_stream} ({_BACKFILL_HOURS}h)"

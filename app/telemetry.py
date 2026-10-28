@@ -1,4 +1,10 @@
-"""OTLP Telemetry Client — sends traces, metrics, and logs in OTLP JSON format.
+"""OTLP Telemetry Client — sends traces, metrics, and logs over OTLP/HTTP.
+
+Logs and traces use OTLP JSON against Elastic Cloud Managed OTLP (``/v1/logs``,
+``/v1/traces``). Metrics are encoded as protobuf and posted to Elasticsearch
+``/_otlp/v1/metrics``: on 9.5.1, mOTLP ``/v1/metrics`` returns HTTP 200 and then
+drops the points (JSON or protobuf). ES native OTLP indexes protobuf metrics
+into ``metrics-*.otel-*``.
 
 Adapted from otel-demo-gen/backend/generator.py. Uses httpx with auth headers,
 batching, and graceful failure when the collector is unavailable.
@@ -8,17 +14,25 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import threading
 import time
 from typing import Any, Optional
 
 import httpx
+from google.protobuf.json_format import ParseDict
+from opentelemetry.proto.collector.metrics.v1.metrics_service_pb2 import (
+    ExportMetricsServiceRequest,
+)
 
 from app.config import (
+    ELASTIC_URL,
     OTLP_API_KEY,
     OTLP_AUTH_TYPE,
     OTLP_ENDPOINT,
     SEVERITY_MAP,
 )
+from scenario_engine.runtimes import RUNTIME_BY_LANGUAGE
 
 logger = logging.getLogger("nova7.telemetry")
 
@@ -51,7 +65,7 @@ def _now_ns() -> str:
 
 
 class OTLPClient:
-    """Sends OTLP JSON payloads to an HTTP endpoint (typically an OTel Collector)."""
+    """Sends OTLP/HTTP payloads to Elastic Cloud Managed OTLP or a collector."""
 
     def __init__(
         self,
@@ -67,7 +81,8 @@ class OTLPClient:
         if self.api_key:
             headers["Authorization"] = f"{self.auth_type} {self.api_key}"
 
-        self.client = httpx.Client(headers=headers, http2=True, timeout=5)
+        self.client = httpx.Client(headers=headers, http2=True, timeout=10)
+        self._send_lock = threading.Lock()
         self.consecutive_failures = 0
         self.max_failures_before_backoff = 5
 
@@ -87,15 +102,29 @@ class OTLPClient:
                 self.client.close()
             except Exception:
                 pass
-        self.client = httpx.Client(headers=headers, http2=True, timeout=5)
+        self.client = httpx.Client(headers=headers, http2=True, timeout=10)
         logger.info("OTLPClient reconfigured → %s", self.endpoint)
 
     # ── Resource helpers ───────────────────────────────────────────────
     @staticmethod
     def build_resource(
-        service_name: str, service_cfg: dict[str, Any], namespace: str = "demo"
+        service_name: str,
+        service_cfg: dict[str, Any],
+        namespace: str = "demo",
+        infra_attrs: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Build an OTLP resource object for a service."""
+        """Build an OTLP resource object for a service.
+
+        ``infra_attrs`` is an optional dict of pre-computed infrastructure resource
+        attributes (host.name, host.id, container.id, k8s.pod.*, k8s.node.*,
+        k8s.cluster.name, service.instance.id, …) sourced from
+        ``infra_topology.get_resource_attrs()``.  When supplied they override the
+        synthetic defaults so that logs, per-service metrics, and single-span traces
+        emitted by BaseService carry the same join keys as the topology-driven trace,
+        JVM-metrics, and k8s-metrics generators — enabling the full
+        trace → metric → log → infra correlation loop in APM / Infra UI.
+        When omitted the behaviour is unchanged (backward-compatible).
+        """
         language = service_cfg.get("language", "python")
         attrs = {
             "service.name": service_name,
@@ -118,41 +147,19 @@ class OTLPClient:
             "data_stream.namespace": "default",
             "elasticsearch.index": "logs.otel",
         }
-        # Add process.runtime attributes so Elastic APM can identify the runtime
-        _RUNTIME_ATTRS = {
-            "java": {
-                "process.runtime.name": "OpenJDK Runtime Environment",
-                "process.runtime.version": "21.0.5+11-LTS",
-                "process.runtime.description": "Eclipse Adoptium OpenJDK 64-Bit Server VM 21.0.5+11-LTS",
-            },
-            "python": {
-                "process.runtime.name": "CPython",
-                "process.runtime.version": "3.12.3",
-                "process.runtime.description": "CPython 3.12.3",
-            },
-            "go": {
-                "process.runtime.name": "go",
-                "process.runtime.version": "go1.22.4",
-                "process.runtime.description": "go1.22.4 linux/amd64",
-            },
-            "dotnet": {
-                "process.runtime.name": ".NET",
-                "process.runtime.version": "8.0.6",
-                "process.runtime.description": ".NET 8.0.6",
-            },
-            "rust": {
-                "process.runtime.name": "rustc",
-                "process.runtime.version": "1.79.0",
-                "process.runtime.description": "rustc 1.79.0",
-            },
-            "cpp": {
-                "process.runtime.name": "gcc",
-                "process.runtime.version": "13.2.0",
-                "process.runtime.description": "GCC 13.2.0",
-            },
-        }
-        if language in _RUNTIME_ATTRS:
-            attrs.update(_RUNTIME_ATTRS[language])
+        # Add process.runtime attributes so Elastic APM can identify the runtime.
+        # Metadata is sourced from scenario_engine.runtimes.RUNTIME_BY_LANGUAGE —
+        # the same constant used to generate Streams knowledge indicators, so
+        # telemetry and indicators always stay in sync.
+        rt = RUNTIME_BY_LANGUAGE.get(language)
+        if rt:
+            attrs["process.runtime.name"] = rt["runtime_name"]
+            attrs["process.runtime.version"] = rt["process_runtime_version"]
+            attrs["process.runtime.description"] = rt["process_runtime_description"]
+        # Overlay topology-derived infra attributes last so they take precedence over
+        # the synthetic defaults above (host.name, host.id, service.instance.id, …).
+        if infra_attrs:
+            attrs.update(infra_attrs)
         return {
             "attributes": _format_attributes(attrs),
             "schemaUrl": SCHEMA_URL,
@@ -266,21 +273,35 @@ class OTLPClient:
         """Send a batch of spans for a single resource."""
         if not spans:
             return
-        trace_resource = self._patch_resource_data_stream(resource, "traces")
-        payload = {
-            "resourceSpans": [
-                {
-                    "resource": trace_resource,
-                    "scopeSpans": [
-                        {
-                            "scope": {"name": SCOPE_NAME},
-                            "spans": spans,
-                        }
-                    ],
-                }
-            ]
-        }
-        self._send(f"{self.endpoint}/v1/traces", payload, "traces")
+        self.send_traces_multi([(resource, spans)])
+
+    def send_traces_multi(
+        self,
+        batches: list[tuple[dict[str, Any], list[dict[str, Any]]]],
+    ) -> None:
+        """Send a batch of spans for multiple resources in a single POST.
+
+        OTLP/HTTP allows multiple `resourceSpans` entries per request — sending
+        all services in one POST instead of one POST per service is N×-cheaper
+        on network RTT, which dominates throughput for cloud OTLP endpoints.
+        """
+        resource_spans = []
+        for resource, spans in batches:
+            if not spans:
+                continue
+            trace_resource = self._patch_resource_data_stream(resource, "traces")
+            resource_spans.append({
+                "resource": trace_resource,
+                "scopeSpans": [
+                    {
+                        "scope": {"name": SCOPE_NAME},
+                        "spans": spans,
+                    }
+                ],
+            })
+        if not resource_spans:
+            return
+        self._send(f"{self.endpoint}/v1/traces", {"resourceSpans": resource_spans}, "traces")
 
     def build_span(
         self,
@@ -352,6 +373,31 @@ class OTLPClient:
                 break
         return res
 
+    @staticmethod
+    def _encode_otlp(payload: dict) -> tuple[bytes, dict[str, str]]:
+        """Serialize an OTLP payload.
+
+        Metrics must be protobuf for Elasticsearch ``/_otlp/v1/metrics``.
+        Logs and traces continue to use OTLP JSON on the managed ingest URL.
+        """
+        if "resourceMetrics" in payload:
+            msg = ParseDict(
+                payload,
+                ExportMetricsServiceRequest(),
+                ignore_unknown_fields=True,
+            )
+            return msg.SerializeToString(), {"Content-Type": "application/x-protobuf"}
+        return json.dumps(payload).encode(), {}
+
+    @staticmethod
+    def _metrics_otlp_url() -> str | None:
+        """ES native OTLP metrics path, or None if Elasticsearch is not configured."""
+        es = (
+            (ELASTIC_URL or "").strip()
+            or os.getenv("ELASTICSEARCH_URL", "").strip()
+        ).rstrip("/")
+        return f"{es}/_otlp/v1/metrics" if es else None
+
     def _send(self, url: str, payload: dict, signal_name: str) -> None:
         if not self.endpoint:
             return  # No endpoint configured yet; silently drop until reconfigure() is called
@@ -363,17 +409,33 @@ class OTLPClient:
             if time.time() % backoff > 1:
                 return
 
+        # httpx.Client is thread-safe and multiplexes concurrent requests over
+        # HTTP/2, so the network call itself is intentionally NOT serialized —
+        # holding a lock around it would force every service thread in the
+        # process through one request at a time, starving whichever threads
+        # lose the race (observed: some services stalled 80-240s between
+        # emissions despite a 1.5-3s tick loop). The lock is only used below
+        # to keep the failure counter's read-modify-write atomic.
         try:
-            response = self.client.post(url, data=json.dumps(payload))
+            body, extra_headers = self._encode_otlp(payload)
+            # mOTLP /v1/metrics acks then drops; ES native OTLP indexes protobuf.
+            if "resourceMetrics" in payload:
+                url = self._metrics_otlp_url() or url
+            response = self.client.post(url, content=body, headers=extra_headers or None)
             response.raise_for_status()
-            self.consecutive_failures = 0
+            with self._send_lock:
+                self.consecutive_failures = 0
         except httpx.RequestError as exc:
-            self.consecutive_failures += 1
-            if self.consecutive_failures <= 3:
+            with self._send_lock:
+                self.consecutive_failures += 1
+                failures = self.consecutive_failures
+            if failures <= 3:
                 logger.warning("OTLP %s send failed (connection): %s", signal_name, exc)
         except httpx.HTTPStatusError as exc:
-            self.consecutive_failures += 1
-            if self.consecutive_failures <= 3:
+            with self._send_lock:
+                self.consecutive_failures += 1
+                failures = self.consecutive_failures
+            if failures <= 3:
                 logger.warning(
                     "OTLP %s send failed (HTTP %d): %s",
                     signal_name,
@@ -381,8 +443,10 @@ class OTLPClient:
                     exc.response.text[:200],
                 )
         except Exception as exc:
-            self.consecutive_failures += 1
-            if self.consecutive_failures <= 3:
+            with self._send_lock:
+                self.consecutive_failures += 1
+                failures = self.consecutive_failures
+            if failures <= 3:
                 logger.warning("OTLP %s send failed: %s", signal_name, exc)
 
     def close(self) -> None:

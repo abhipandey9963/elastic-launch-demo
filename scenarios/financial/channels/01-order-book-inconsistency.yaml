@@ -1,0 +1,65 @@
+name: Order Book Inconsistency
+subsystem: order_management
+vehicle_section: order_book
+error_type: OMS-BOOK-IMBALANCE
+sensor_type: order_book_integrity
+affected_services:
+- order-gateway
+- matching-engine
+cascade_services:
+- risk-calculator
+- audit-logger
+description: Order book bid/ask levels out of sync between primary and replica shards
+investigation_notes: |-
+  1. Check order-gateway logs for OMS-BOOK-IMBALANCE — note book_id, instrument, and bid_ask_spread value.
+  2. Query FROM logs.otel.financial.* | WHERE body.text LIKE "*OMS-BOOK-IMBALANCE*" | STATS count() BY service.name, instrument to identify recurrence.
+  3. Inspect matching-engine replica sync lag — if replica_sync_lag_us > 50000 the book is stale and must be rebuilt from primary.
+  4. Verify market-data-feed is publishing fresh ticks for the affected instrument — a stale feed drives spread widening.
+  5. If book_id shows repeated IMBALANCED state, trigger force_book_resync on matching-engine to rebuild from primary sequence.
+remediation_action: force_book_resync
+error_message: '[OMS] OMS-BOOK-IMBALANCE: instrument={instrument} bid_ask_spread={spread}ticks max_spread={max_spread}ticks
+  book={book_id}'
+stack_trace: |-
+  === ORDER BOOK SNAPSHOT {book_id} ===
+  instrument={instrument}  status=IMBALANCED
+  --------- BID SIDE ---------  --------- ASK SIDE ---------
+    LEVEL   PRICE     QTY         LEVEL   PRICE     QTY
+    1       244.50    1200         1       244.85    800
+    2       244.48    3400         2       244.90    2100
+    3       244.45    5600         3       244.95    1500
+    4       244.40    2800         4       245.10    4200
+    5       244.35    1100         5       245.25    6700
+  spread={spread}ticks  max_allowed={max_spread}ticks
+  replica_sync=STALE  last_sync_us=48230  primary_seq=8832014  replica_seq=8831997
+  ACTION: halt_matching=true  alert=OMS-BOOK-IMBALANCE
+correlation_attr: {}
+fault_params:
+  instrument: {choice: [US.AAPL, US.GOOGL, US.MSFT, US.AMZN, US.TSLA, FX.EURUSD, FX.GBPUSD, FUT.ES, FUT.NQ, OPT.SPX]}
+  spread: {randint: [5, 50]}
+  max_spread: 3
+  book_id:
+    format: "BOOK-{t}-{n:02d}"
+    t: {choice: [EQ, FI, FX, DRV]}
+    n: {randint: [1, 50]}
+rca_clues:
+  order-gateway:
+    oms.book_spread_ticks: {randint: [5, 50]}
+    oms.order_reject_rate_pct: {uniform: [8.0, 45.0], round: 1}
+  matching-engine:
+    engine.replica_sync_lag_us: {randint: [40000, 200000]}
+    engine.book_imbalance_count: {randint: [1, 20]}
+  risk-calculator:
+    risk.halted_instruments_count: {randint: [1, 10]}
+    risk.stale_book_exposure_usd: {randint: [500000, 5000000]}
+  audit-logger:
+    audit.book_event_queue_depth: {randint: [100, 5000]}
+    audit.imbalance_alert_count: {randint: [1, 50]}
+business_impact:
+  - kpi: business.order_flow_per_min
+    factor: {uniform: [0.30, 0.60]}
+  - kpi: business.fill_rate_pct
+    factor: {uniform: [0.25, 0.55]}
+  - kpi: business.rejected_orders_per_min
+    factor: {uniform: [2.5, 6.0]}
+  - kpi: business.avg_spread_bps
+    factor: {uniform: [2.0, 5.0]}

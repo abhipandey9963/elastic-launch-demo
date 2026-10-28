@@ -1,0 +1,72 @@
+name: FIX Protocol Parse Error
+subsystem: order_management
+vehicle_section: fix_gateway
+error_type: FIX-PARSE-REJECT
+sensor_type: protocol_parser
+affected_services:
+- order-gateway
+- audit-logger
+cascade_services:
+- matching-engine
+- compliance-monitor
+description: FIX 4.4 message parsing failure due to malformed tags or checksum errors
+investigation_notes: |-
+  1. Check order-gateway logs for FIX-PARSE-REJECT — note fix_session, msg_type, bad_tag, and the checksum mismatch between expected and actual values.
+  2. Query FROM logs.otel.financial.* | WHERE body.text LIKE "*FIX-PARSE-REJECT*" | STATS count() BY fix_session, bad_tag to find the session and field combination causing most rejections.
+  3. Inspect the raw FIX message dump for body_length vs computed_length mismatch — a length discrepancy indicates tag 9 is being set incorrectly by the counterparty's OMS.
+  4. Check audit-logger for the parse_errors count trend on this session — if error rate is rising, the counterparty may have deployed a new OMS version with a protocol deviation.
+  5. Send a FIX Reject (35=3) back to the counterparty with a clear text explanation; coordinate with the counterparty's FIX connectivity team to fix the malformed tag before resuming the session.
+remediation_action: send_fix_reject_and_notify_counterparty
+error_message: '[FIX] FIX-PARSE-REJECT: session={fix_session} msg_type={msg_type} tag={bad_tag} checksum_expected={expected_checksum}
+  checksum_actual={actual_checksum}'
+stack_trace: |-
+  === RAW FIX MESSAGE DUMP ===
+  8=FIX.4.4|9=176|35={msg_type}|49=SENDER|56=TARGET|34=12847|
+  52=20260217-14:32:07.882|11=ORD-847291|55=AAPL|54=1|38=2500|
+  44=244.52|40=2|59=0|{bad_tag}=<<<MALFORMED>>>|
+  10={actual_checksum}|
+  --- PARSE ANALYSIS ---
+    session={fix_session}  msg_type={msg_type}  direction=INBOUND
+    tag_{bad_tag}  status=INVALID  reason=unexpected_value_format
+    checksum  expected={expected_checksum}  actual={actual_checksum}  match=false
+    body_length=176  computed_length=174  length_match=false
+  --- SESSION STATS ---
+    msgs_today=124,832  parse_errors=47  reject_rate=0.038%
+    last_good_seq=12846  gap_detected=false
+  ACTION: send_reject(35=3)  increment_error_count=true  alert=FIX-PARSE-REJECT
+correlation_attr: {}
+fault_params:
+  fix_session:
+    format: "FIX-{e}-{n:02d}"
+    e: {choice: [NYSE, NSDQ, CBOE, CME]}
+    n: {randint: [1, 20]}
+  msg_type: {choice: [D, G, F, "8", "9"]}
+  bad_tag: {choice: [35, 49, 56, 11, 55, 44, 38, 54, 40]}
+  expected_checksum:
+    format: "{n:03d}"
+    n: {randint: [0, 255]}
+  actual_checksum:
+    format: "{n:03d}"
+    n: {randint: [0, 255]}
+rca_clues:
+  order-gateway:
+    oms.fix_parse_error_rate_pct: {uniform: [0.01, 5.0], round: 3}
+    oms.fix_reject_msg_count: {randint: [1, 200]}
+  audit-logger:
+    audit.fix_session_error_events: {randint: [1, 100]}
+    audit.bad_tag_frequency: {randint: [1, 50]}
+  matching-engine:
+    engine.orders_dropped_parse_error: {randint: [0, 100]}
+    engine.fix_session_resets: {randint: [0, 10]}
+  compliance-monitor:
+    compliance.fix_protocol_violation_flags: {randint: [0, 20]}
+    compliance.session_audit_gaps_from_rejects: {randint: [0, 10]}
+business_impact:
+  - kpi: business.order_flow_per_min
+    factor: {uniform: [0.25, 0.55]}
+  - kpi: business.rejected_orders_per_min
+    factor: {uniform: [3.0, 7.0]}
+  - kpi: business.executed_trades_per_min
+    factor: {uniform: [0.25, 0.55]}
+  - kpi: business.cancel_replace_rate_pct
+    factor: {uniform: [2.0, 5.0]}

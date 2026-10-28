@@ -5,34 +5,37 @@ description: >
   Implements the hold protocol: escalate -> hold -> investigate -> resolve -> resume.
   All state transitions are logged for post-mission review.
 
+tags:
+  - "__NS__"
+
+# Kibana 9.5+: inputs under manual trigger (elastic/kibana#269992).
 triggers:
   - type: manual
-
-inputs:
-  - name: action
-    type: string
-    required: true
-    description: "Lifecycle action: escalate, request_hold, resolve, request_resume"
-  - name: channel
-    type: number
-    default: 0
-    description: "Fault channel triggering escalation (1-20)"
-  - name: severity
-    type: string
-    default: "WARNING"
-    description: "Escalation severity: ADVISORY, CAUTION, WARNING, CRITICAL"
-  - name: justification
-    type: string
-    required: true
-    description: "Reason for the escalation action"
-  - name: hold_id
-    type: string
-    default: ""
-    description: "Hold identifier for resume and investigation actions"
-  - name: investigation_summary
-    type: string
-    default: ""
-    description: "Summary of investigation findings for resolve action"
+    inputs:
+      - name: action
+        type: string
+        required: true
+        description: "Lifecycle action: escalate, request_hold, resolve, request_resume"
+      - name: channel
+        type: number
+        default: 0
+        description: "Fault channel triggering escalation (1-20)"
+      - name: severity
+        type: string
+        default: "WARNING"
+        description: "Escalation severity: ADVISORY, CAUTION, WARNING, CRITICAL"
+      - name: justification
+        type: string
+        required: true
+        description: "Reason for the escalation action"
+      - name: hold_id
+        type: string
+        default: ""
+        description: "Hold identifier for resume and investigation actions"
+      - name: investigation_summary
+        type: string
+        default: ""
+        description: "Summary of investigation findings for resolve action"
 
 steps:
   - name: route_escalate
@@ -52,7 +55,7 @@ steps:
       - name: escalate_search
         type: elasticsearch.search
         with:
-          index: "logs"
+          index: "logs.otel.__NS__,logs.otel.__NS__.*"
           size: 2
           query:
             bool:
@@ -152,7 +155,7 @@ steps:
       - name: resume_safety_check
         type: elasticsearch.search
         with:
-          index: "logs"
+          index: "logs.otel.__NS__,logs.otel.__NS__.*"
           size: 0
           query:
             bool:

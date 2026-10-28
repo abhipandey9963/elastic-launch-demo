@@ -4,6 +4,12 @@
 Ported from otel-demo-gen/backend/k8s_metrics_generator.py, adapted to NOVA-7 patterns.
 Generates metrics that populate the [OTEL][Metrics Kubernetes] Cluster Overview dashboard.
 
+Each metric is routed to the index that the real OTel receiver would produce:
+  - kubeletstatsreceiver scope + data_stream.dataset="kubeletstatsreceiver"
+    → metrics-kubeletstatsreceiver.otel-default (queried by Kubelet panels)
+  - k8sclusterreceiver scope + data_stream.dataset="k8sclusterreceiver"
+    → metrics-k8sclusterreceiver.otel-default (queried by Cluster panels)
+
 Usage (standalone):
     python3 -m log_generators.k8s_metrics_generator
 """
@@ -18,6 +24,7 @@ import signal
 import threading
 import time
 import uuid
+import zlib
 from datetime import datetime, timezone
 
 from app.telemetry import OTLPClient, _format_attributes, SCHEMA_URL, _now_ns
@@ -35,7 +42,7 @@ SCOPE_VERSION = "0.115.0"
 
 # ── Load from active scenario ────────────────────────────────────────────────
 def _load_scenario_data():
-    from scenarios import get_scenario
+    from scenario_engine import get_scenario
     scenario = get_scenario(ACTIVE_SCENARIO)
     return list(scenario.services.keys()), scenario.k8s_clusters
 
@@ -51,17 +58,24 @@ CLOUD_CONFIG = {
 }
 
 
-def _init_pod_data(cluster: dict, seed_offset: int = 0) -> dict:
+def _init_pod_data(cluster: dict, seed_offset: int = 0, namespace: str = NAMESPACE) -> dict:
     """Initialize static K8s pod/node/deployment data for a cluster's services.
 
-    Uses a fixed-seed RNG so pod/node names are deterministic across restarts.
+    Uses a namespace-scoped seed so pod/node names are deterministic across restarts
+    and unique per scenario even when scenarios share the same cluster-index/region layout.
+    Seed expression mirrors infra_topology.build_topology exactly so IDs are identical
+    between the trace generator and the k8s metrics generator.
     seed_offset differentiates clusters (0, 1, 2).
     """
-    stable = random.Random(42 + seed_offset)
+    # Namespace-scoped seed: random.Random(str) uses sha512, stable across processes.
+    # Must mirror build_topology in infra_topology.py exactly.
+    stable = random.Random(f"{namespace}:{seed_offset}")
 
     region = cluster["region"]
+    # Per-namespace subnet octet — ensures node names never collide across scenarios.
+    ns_octet = zlib.crc32(namespace.encode()) % 256
     node_names = [
-        f"ip-10-0-{stable.randint(10, 200)}-{stable.randint(10, 200)}.{region}.compute.internal"
+        f"ip-10-{ns_octet}-{stable.randint(10, 200)}-{stable.randint(10, 200)}.{region}.compute.internal"
         for _ in range(3)
     ]
 
@@ -115,8 +129,8 @@ def _gauge(name: str, unit: str, value, is_int: bool = False, attributes: dict |
     return {"name": name, "unit": unit, "gauge": {"dataPoints": [dp]}}
 
 
-def _cumulative_sum(name: str, unit: str, value, is_int: bool = True, attributes: dict | None = None) -> dict:
-    now = _now_ns()
+def _cumulative_sum(name: str, unit: str, value, is_int: bool = True, attributes: dict | None = None, ts: str | None = None) -> dict:
+    now = ts or _now_ns()
     dp: dict = {"timeUnixNano": now}
     if is_int:
         dp["asInt"] = str(int(value))
@@ -130,11 +144,16 @@ def _cumulative_sum(name: str, unit: str, value, is_int: bool = True, attributes
     }
 
 
-def _build_pod_resource(svc: str, pod_data: dict, cluster: dict) -> dict:
-    """Build OTLP resource for a pod (kubeletstatsreceiver)."""
+def _build_pod_resource(svc: str, pod_data: dict, cluster: dict, namespace: str = NAMESPACE) -> dict:
+    """Build OTLP resource for a pod (kubeletstatsreceiver).
+
+    Carries kubelet-owned pod and container metrics.
+    Note: k8s.container.status.last_terminated_reason is a k8sclusterreceiver
+    resource attribute — it lives on _build_container_resource instead.
+    """
     p = pod_data["pods"][svc]
     attrs = {
-        "k8s.namespace.name": NAMESPACE,
+        "k8s.namespace.name": namespace,
         "k8s.deployment.name": p["deployment_name"],
         "k8s.replicaset.name": p["replicaset_name"],
         "k8s.node.name": p["node_name"],
@@ -146,9 +165,8 @@ def _build_pod_resource(svc: str, pod_data: dict, cluster: dict) -> dict:
         "container.name": f"{svc}-container",
         "container.id": p["container_id"],
         "container.image.name": f"{svc}:latest",
-        "k8s.container.status.last_terminated_reason": "Completed",
         "service.name": svc,
-        "service.namespace": NAMESPACE,
+        "service.namespace": namespace,
         "host.name": p["node_name"],
         "host.architecture": "amd64",
         "os.type": "linux",
@@ -166,7 +184,10 @@ def _build_pod_resource(svc: str, pod_data: dict, cluster: dict) -> dict:
 
 
 def _build_node_resource(node_name: str, pod_data: dict, cluster: dict) -> dict:
-    """Build OTLP resource for a node (k8sclusterreceiver)."""
+    """Build OTLP resource for a node (k8sclusterreceiver).
+
+    Carries cluster-owned node metrics: allocatable_*, condition_*.
+    """
     # Find a pod on this node for its node_uid
     node_uid = ""
     container_id = ""
@@ -194,12 +215,40 @@ def _build_node_resource(node_name: str, pod_data: dict, cluster: dict) -> dict:
     return {"attributes": _format_attributes(attrs), "schemaUrl": SCHEMA_URL}
 
 
-def _build_deployment_resource(svc: str, pod_data: dict, cluster: dict) -> dict:
+def _build_node_resource_kubelet(node_name: str, pod_data: dict, cluster: dict) -> dict:
+    """Build OTLP resource for a node (kubeletstatsreceiver).
+
+    Carries kubelet-owned node metrics: cpu.usage, memory.*, filesystem.*, network.*.
+    """
+    node_uid = ""
+    for svc in cluster["services"]:
+        p = pod_data["pods"][svc]
+        if p["node_name"] == node_name:
+            node_uid = p["node_uid"]
+            break
+    attrs = {
+        "k8s.node.name": node_name,
+        "k8s.node.uid": node_uid,
+        "k8s.cluster.name": cluster["name"],
+        "host.name": node_name,
+        "cloud.provider": cluster["provider"],
+        "cloud.platform": cluster["platform"],
+        "cloud.region": cluster["region"],
+        "os.type": "linux",
+        "os.description": cluster["os_description"],
+        "data_stream.type": "metrics",
+        "data_stream.dataset": "kubeletstatsreceiver",
+        "data_stream.namespace": "default",
+    }
+    return {"attributes": _format_attributes(attrs), "schemaUrl": SCHEMA_URL}
+
+
+def _build_deployment_resource(svc: str, pod_data: dict, cluster: dict, namespace: str = NAMESPACE) -> dict:
     """Build OTLP resource for a deployment (k8sclusterreceiver)."""
     p = pod_data["pods"][svc]
     attrs = {
         "k8s.deployment.name": p["deployment_name"],
-        "k8s.namespace.name": NAMESPACE,
+        "k8s.namespace.name": namespace,
         "k8s.cluster.name": cluster["name"],
         "cloud.provider": cluster["provider"],
         "cloud.platform": cluster["platform"],
@@ -212,63 +261,87 @@ def _build_deployment_resource(svc: str, pod_data: dict, cluster: dict) -> dict:
 
 
 def _generate_pod_metrics(svc: str, state: K8sState, rng: random.Random) -> list:
-    """Generate pod + container metrics for one service."""
+    """Generate pod + kubelet-owned container metrics for one service.
+
+    kubeletstatsreceiver owns: pod cpu/memory/network/filesystem,
+    and per-container cpu.usage + memory.working_set.
+    k8sclusterreceiver-owned container metrics (restarts, requests, limits)
+    are emitted separately via _generate_container_metrics.
+    """
     metrics = []
-    p_info = None  # not needed, we use state
+    ts = _now_ns()  # shared timestamp — all metrics go into one TSDB document
 
     # Pod CPU
-    metrics.append(_gauge("k8s.pod.cpu.usage", "ns", rng.randint(10_000_000, 500_000_000), is_int=True))
-    metrics.append(_gauge("k8s.pod.cpu_limit_utilization", "1", rng.uniform(0.05, 0.85)))
-    metrics.append(_gauge("k8s.pod.cpu.node.utilization", "1", rng.uniform(0.05, 0.45)))
+    metrics.append(_gauge("k8s.pod.cpu.usage", "ns", rng.randint(10_000_000, 500_000_000), is_int=True, ts=ts))
+    metrics.append(_gauge("k8s.pod.cpu_limit_utilization", "1", rng.uniform(0.05, 0.85), ts=ts))
+    metrics.append(_gauge("k8s.pod.cpu.node.utilization", "1", rng.uniform(0.05, 0.45), ts=ts))
 
     # Pod Memory
-    metrics.append(_gauge("k8s.pod.memory.usage", "By", rng.randint(100_000_000, 800_000_000), is_int=True))
-    metrics.append(_gauge("k8s.pod.memory_limit_utilization", "1", rng.uniform(0.25, 0.85)))
-    metrics.append(_gauge("k8s.pod.memory.node.utilization", "1", rng.uniform(0.001, 0.05)))
-    metrics.append(_gauge("k8s.pod.memory.working_set", "By", rng.randint(80_000_000, 600_000_000), is_int=True))
+    metrics.append(_gauge("k8s.pod.memory.usage", "By", rng.randint(100_000_000, 800_000_000), is_int=True, ts=ts))
+    metrics.append(_gauge("k8s.pod.memory_limit_utilization", "1", rng.uniform(0.25, 0.85), ts=ts))
+    metrics.append(_gauge("k8s.pod.memory.node.utilization", "1", rng.uniform(0.001, 0.05), ts=ts))
+    metrics.append(_gauge("k8s.pod.memory.working_set", "By", rng.randint(80_000_000, 600_000_000), is_int=True, ts=ts))
+    metrics.append(_gauge("k8s.pod.memory.rss", "By", rng.randint(50_000_000, 400_000_000), is_int=True, ts=ts))
+    metrics.append(_gauge("k8s.pod.memory.available", "By", rng.randint(100_000_000, 600_000_000), is_int=True, ts=ts))
 
     # Pod Network (cumulative)
-    metrics.append(_cumulative_sum("k8s.pod.network.rx", "By", state.net_rx[svc]))
-    metrics.append(_cumulative_sum("k8s.pod.network.tx", "By", state.net_tx[svc]))
+    metrics.append(_cumulative_sum("k8s.pod.network.rx", "By", state.net_rx[svc], ts=ts))
+    metrics.append(_cumulative_sum("k8s.pod.network.tx", "By", state.net_tx[svc], ts=ts))
 
     # Pod Filesystem
-    metrics.append(_gauge("k8s.pod.filesystem.usage", "By", rng.randint(100_000_000, 500_000_000), is_int=True))
+    metrics.append(_gauge("k8s.pod.filesystem.usage", "By", rng.randint(100_000_000, 500_000_000), is_int=True, ts=ts))
 
-    # Container metrics
+    # Container metrics owned by kubeletstatsreceiver
     container_attrs = {"container.name": f"{svc}-container"}
-    metrics.append(_gauge("k8s.container.cpu.usage", "ns", rng.randint(10_000_000, 600_000_000), is_int=True, attributes=container_attrs))
-    metrics.append(_gauge("k8s.container.memory_request", "By", rng.randint(128 * 2**20, 512 * 2**20), is_int=True, attributes=container_attrs))
-    metrics.append(_gauge("k8s.container.memory_limit", "By", rng.randint(256 * 2**20, 1024 * 2**20), is_int=True, attributes=container_attrs))
-    metrics.append(_gauge("k8s.container.cpu_limit", "{cpu}", rng.uniform(0.5, 2.0), attributes=container_attrs))
-    metrics.append(_gauge("k8s.container.cpu_request", "{cpu}", rng.uniform(0.1, 1.0), attributes=container_attrs))
-    metrics.append(_gauge("k8s.container.memory.working_set", "By", rng.randint(100_000_000, 400_000_000), is_int=True, attributes=container_attrs))
-    metrics.append(_cumulative_sum("k8s.container.restarts", "{restart}", state.restarts[svc], attributes=container_attrs))
+    metrics.append(_gauge("k8s.container.cpu.usage", "ns", rng.randint(10_000_000, 600_000_000), is_int=True, attributes=container_attrs, ts=ts))
+    metrics.append(_gauge("k8s.container.memory.working_set", "By", rng.randint(100_000_000, 400_000_000), is_int=True, attributes=container_attrs, ts=ts))
+    metrics.append(_gauge("container.memory.major_page_faults", "1", rng.randint(0, 50), is_int=True, attributes=container_attrs, ts=ts))
 
     return metrics
 
 
-def _generate_node_metrics(rng: random.Random) -> list:
-    """Generate node-level metrics for one node."""
+def _generate_node_metrics_cluster(rng: random.Random) -> list:
+    """Generate k8sclusterreceiver-owned node metrics.
+
+    k8sclusterreceiver owns: allocatable_*, condition_*.
+    """
+    ts = _now_ns()
+    return [
+        _gauge("k8s.node.allocatable_cpu", "1", rng.uniform(2.0, 8.0), ts=ts),
+        _gauge("k8s.node.allocatable_memory", "By", rng.randint(8_000_000_000, 16_000_000_000), is_int=True, ts=ts),
+        _gauge("k8s.node.condition_ready", "1", 1, is_int=True, ts=ts),
+        _gauge("k8s.node.condition_memory_pressure", "1", 1 if rng.random() < 0.1 else 0, is_int=True, ts=ts),
+        _gauge("k8s.node.condition_disk_pressure", "1", 1 if rng.random() < 0.05 else 0, is_int=True, ts=ts),
+    ]
+
+
+def _generate_node_metrics_kubelet(rng: random.Random) -> list:
+    """Generate kubeletstatsreceiver-owned node metrics.
+
+    kubeletstatsreceiver owns: cpu.usage, cpu.utilization, memory.*, filesystem.*, network.*.
+    These metrics land in metrics-kubeletstatsreceiver.otel-* and are referenced by
+    the k8s_otel Node dashboards (filesystem usage/capacity panels, etc.).
+    """
     allocatable_cores = rng.uniform(2.0, 8.0)
     utilization = rng.uniform(0.1, 0.8)
     cpu_usage_ns = int(allocatable_cores * utilization * 10)
+    fs_capacity = rng.randint(100_000_000_000, 200_000_000_000)
+    fs_usage = rng.randint(20_000_000_000, 80_000_000_000)
+    ts = _now_ns()
 
     return [
-        _gauge("k8s.node.cpu.usage", "ns", cpu_usage_ns, is_int=True),
-        _gauge("k8s.node.allocatable_cpu", "1", allocatable_cores),
-        _gauge("k8s.node.cpu.utilization", "1", utilization),
-        _gauge("k8s.node.memory.usage", "By", rng.randint(2_000_000_000, 8_000_000_000), is_int=True),
-        _gauge("k8s.node.memory.working_set", "By", rng.randint(1_500_000_000, 6_000_000_000), is_int=True),
-        _gauge("k8s.node.allocatable_memory", "By", rng.randint(8_000_000_000, 16_000_000_000), is_int=True),
-        _gauge("k8s.node.memory.utilization", "1", rng.uniform(0.2, 0.7)),
-        _gauge("k8s.node.filesystem.usage", "By", rng.randint(20_000_000_000, 80_000_000_000), is_int=True),
-        _gauge("k8s.node.filesystem.capacity", "By", rng.randint(100_000_000_000, 200_000_000_000), is_int=True),
-        _gauge("k8s.node.filesystem.utilization", "1", rng.uniform(0.1, 0.6)),
-        _cumulative_sum("k8s.node.network.rx", "By", rng.randint(1_000_000_000, 10_000_000_000)),
-        _cumulative_sum("k8s.node.network.tx", "By", rng.randint(1_000_000_000, 10_000_000_000)),
-        _gauge("k8s.node.condition_ready", "1", 1, is_int=True),
-        _gauge("k8s.node.condition_memory_pressure", "1", 1 if rng.random() < 0.1 else 0, is_int=True),
-        _gauge("k8s.node.condition_disk_pressure", "1", 1 if rng.random() < 0.05 else 0, is_int=True),
+        _gauge("k8s.node.cpu.usage", "ns", cpu_usage_ns, is_int=True, ts=ts),
+        _gauge("k8s.node.cpu.utilization", "1", utilization, ts=ts),
+        _gauge("k8s.node.memory.usage", "By", rng.randint(2_000_000_000, 8_000_000_000), is_int=True, ts=ts),
+        _gauge("k8s.node.memory.working_set", "By", rng.randint(1_500_000_000, 6_000_000_000), is_int=True, ts=ts),
+        _gauge("k8s.node.memory.available", "By", rng.randint(1_000_000_000, 4_000_000_000), is_int=True, ts=ts),
+        _gauge("k8s.node.memory.utilization", "1", rng.uniform(0.2, 0.7), ts=ts),
+        _gauge("k8s.node.filesystem.usage", "By", fs_usage, is_int=True, ts=ts),
+        _gauge("k8s.node.filesystem.capacity", "By", fs_capacity, is_int=True, ts=ts),
+        _gauge("k8s.node.filesystem.available", "By", fs_capacity - fs_usage, is_int=True, ts=ts),
+        _gauge("k8s.node.filesystem.utilization", "1", fs_usage / fs_capacity, ts=ts),
+        _cumulative_sum("k8s.node.network.rx", "By", rng.randint(1_000_000_000, 10_000_000_000), ts=ts),
+        _cumulative_sum("k8s.node.network.tx", "By", rng.randint(1_000_000_000, 10_000_000_000), ts=ts),
     ]
 
 
@@ -289,12 +362,14 @@ def _generate_deployment_metrics(rng: random.Random) -> list:
 DAEMONSETS = [f"{NAMESPACE}-log-collector", f"{NAMESPACE}-node-exporter"]
 # StatefulSets: 2 stateful services
 STATEFULSETS = [f"{NAMESPACE}-redis", f"{NAMESPACE}-postgres"]
+# Jobs: 2 periodic batch jobs
+JOBS = [f"{NAMESPACE}-db-backup", f"{NAMESPACE}-report-gen"]
 
 
-def _build_daemonset_resource(ds_name: str, cluster: dict) -> dict:
+def _build_daemonset_resource(ds_name: str, cluster: dict, namespace: str = NAMESPACE) -> dict:
     attrs = {
         "k8s.daemonset.name": ds_name,
-        "k8s.namespace.name": NAMESPACE,
+        "k8s.namespace.name": namespace,
         "k8s.cluster.name": cluster["name"],
         "cloud.provider": cluster["provider"],
         "cloud.platform": cluster["platform"],
@@ -313,13 +388,14 @@ def _generate_daemonset_metrics(rng: random.Random, num_nodes: int) -> list:
         _gauge("k8s.daemonset.desired_scheduled_nodes", "1", desired, is_int=True, ts=ts),
         _gauge("k8s.daemonset.ready_nodes", "1", ready, is_int=True, ts=ts),
         _gauge("k8s.daemonset.current_scheduled_nodes", "1", desired, is_int=True, ts=ts),
+        _gauge("k8s.daemonset.misscheduled_nodes", "1", 0, is_int=True, ts=ts),
     ]
 
 
-def _build_statefulset_resource(ss_name: str, cluster: dict) -> dict:
+def _build_statefulset_resource(ss_name: str, cluster: dict, namespace: str = NAMESPACE) -> dict:
     attrs = {
         "k8s.statefulset.name": ss_name,
-        "k8s.namespace.name": NAMESPACE,
+        "k8s.namespace.name": namespace,
         "k8s.cluster.name": cluster["name"],
         "cloud.provider": cluster["provider"],
         "cloud.platform": cluster["platform"],
@@ -338,14 +414,15 @@ def _generate_statefulset_metrics(rng: random.Random) -> list:
         _gauge("k8s.statefulset.desired_pods", "1", desired, is_int=True, ts=ts),
         _gauge("k8s.statefulset.ready_pods", "1", ready, is_int=True, ts=ts),
         _gauge("k8s.statefulset.current_pods", "1", desired, is_int=True, ts=ts),
+        _gauge("k8s.statefulset.updated_pods", "1", desired, is_int=True, ts=ts),
     ]
 
 
-def _build_replicaset_resource(svc: str, pod_data: dict, cluster: dict) -> dict:
+def _build_replicaset_resource(svc: str, pod_data: dict, cluster: dict, namespace: str = NAMESPACE) -> dict:
     p = pod_data["pods"][svc]
     attrs = {
         "k8s.replicaset.name": p["replicaset_name"],
-        "k8s.namespace.name": NAMESPACE,
+        "k8s.namespace.name": namespace,
         "k8s.cluster.name": cluster["name"],
         "cloud.provider": cluster["provider"],
         "cloud.platform": cluster["platform"],
@@ -366,13 +443,13 @@ def _generate_replicaset_metrics(rng: random.Random) -> list:
     ]
 
 
-def _build_pod_phase_resource(svc: str, pod_data: dict, cluster: dict) -> dict:
+def _build_pod_phase_resource(svc: str, pod_data: dict, cluster: dict, namespace: str = NAMESPACE) -> dict:
     """Resource for pod-phase metrics (k8sclusterreceiver scope)."""
     p = pod_data["pods"][svc]
     attrs = {
         "k8s.pod.name": p["pod_name"],
         "k8s.pod.uid": p["pod_uid"],
-        "k8s.namespace.name": NAMESPACE,
+        "k8s.namespace.name": namespace,
         "k8s.cluster.name": cluster["name"],
         "k8s.node.name": p["node_name"],
         "cloud.provider": cluster["provider"],
@@ -394,6 +471,150 @@ def _generate_pod_phase_metric(rng: random.Random) -> list:
     ]
 
 
+# ── Container resource (k8sclusterreceiver) ──────────────────────────────────
+
+def _build_container_resource(svc: str, pod_data: dict, cluster: dict, namespace: str = NAMESPACE) -> dict:
+    """Build OTLP resource for a container (k8sclusterreceiver).
+
+    k8sclusterreceiver owns: k8s.container.restarts, cpu/memory requests+limits.
+    k8s.container.status.last_terminated_reason is a resource attribute on this
+    resource (it is disabled by default in the real receiver but is explicitly
+    enabled in the edot-values.yaml kube-stack config).
+    """
+    p = pod_data["pods"][svc]
+    attrs = {
+        "k8s.container.name": f"{svc}-container",
+        "k8s.pod.name": p["pod_name"],
+        "k8s.pod.uid": p["pod_uid"],
+        "k8s.namespace.name": namespace,
+        "k8s.node.name": p["node_name"],
+        "k8s.cluster.name": cluster["name"],
+        "container.id": p["container_id"],
+        "k8s.container.status.last_terminated_reason": "Completed",
+        "cloud.provider": cluster["provider"],
+        "cloud.platform": cluster["platform"],
+        "data_stream.type": "metrics",
+        "data_stream.dataset": "k8sclusterreceiver",
+        "data_stream.namespace": "default",
+    }
+    return {"attributes": _format_attributes(attrs), "schemaUrl": SCHEMA_URL}
+
+
+def _generate_container_metrics(svc: str, state: K8sState, rng: random.Random) -> list:
+    """Generate k8sclusterreceiver-owned container metrics.
+
+    k8sclusterreceiver owns: restarts (gauge), cpu/memory request+limit.
+    """
+    ts = _now_ns()
+    return [
+        _gauge("k8s.container.restarts", "{restart}", state.restarts[svc], is_int=True, ts=ts),
+        _gauge("k8s.container.cpu_request", "{cpu}", rng.uniform(0.1, 1.0), ts=ts),
+        _gauge("k8s.container.cpu_limit", "{cpu}", rng.uniform(0.5, 2.0), ts=ts),
+        _gauge("k8s.container.memory_request", "By", rng.randint(128 * 2**20, 512 * 2**20), is_int=True, ts=ts),
+        _gauge("k8s.container.memory_limit", "By", rng.randint(256 * 2**20, 1024 * 2**20), is_int=True, ts=ts),
+    ]
+
+
+# ── Volume resource (kubeletstatsreceiver) ────────────────────────────────────
+
+def _build_volume_resource(svc: str, vol_name: str, pod_data: dict, cluster: dict, namespace: str = NAMESPACE) -> dict:
+    """Build OTLP resource for a pod volume (kubeletstatsreceiver).
+
+    k8s.volume.name is a resource attribute — the real receiver creates one
+    resource per volume, enabling the dashboard to filter by volume name.
+    """
+    p = pod_data["pods"][svc]
+    attrs = {
+        "k8s.volume.name": vol_name,
+        "k8s.volume.type": "persistentVolumeClaim",
+        "k8s.pod.name": p["pod_name"],
+        "k8s.pod.uid": p["pod_uid"],
+        "k8s.namespace.name": namespace,
+        "k8s.node.name": p["node_name"],
+        "k8s.cluster.name": cluster["name"],
+        "cloud.provider": cluster["provider"],
+        "cloud.platform": cluster["platform"],
+        "cloud.region": cluster["region"],
+        "data_stream.type": "metrics",
+        "data_stream.dataset": "kubeletstatsreceiver",
+        "data_stream.namespace": "default",
+    }
+    return {"attributes": _format_attributes(attrs), "schemaUrl": SCHEMA_URL}
+
+
+def _generate_volume_metrics(rng: random.Random) -> list:
+    ts = _now_ns()
+    capacity = rng.randint(10_000_000_000, 50_000_000_000)
+    available = rng.randint(1_000_000_000, capacity)
+    return [
+        _gauge("k8s.volume.capacity", "By", capacity, is_int=True, ts=ts),
+        _gauge("k8s.volume.available", "By", available, is_int=True, ts=ts),
+    ]
+
+
+# ── Namespace resource (k8sclusterreceiver) ───────────────────────────────────
+
+def _build_namespace_resource(namespace: str, cluster: dict) -> dict:
+    """Build OTLP resource for a namespace (k8sclusterreceiver).
+
+    k8sclusterreceiver owns k8s.namespace.phase.
+    """
+    attrs = {
+        "k8s.namespace.name": namespace,
+        "k8s.cluster.name": cluster["name"],
+        "cloud.provider": cluster["provider"],
+        "cloud.platform": cluster["platform"],
+        "data_stream.type": "metrics",
+        "data_stream.dataset": "k8sclusterreceiver",
+        "data_stream.namespace": "default",
+    }
+    return {"attributes": _format_attributes(attrs), "schemaUrl": SCHEMA_URL}
+
+
+def _generate_namespace_metrics(rng: random.Random) -> list:
+    """Generate k8s.namespace.phase gauge.
+
+    1 = Active (the only real value for a running namespace).
+    """
+    ts = _now_ns()
+    return [
+        _gauge("k8s.namespace.phase", "1", 1, is_int=True, ts=ts),
+    ]
+
+
+# ── Job resource (k8sclusterreceiver) ─────────────────────────────────────────
+
+def _build_job_resource(job_name: str, cluster: dict, namespace: str = NAMESPACE) -> dict:
+    """Build OTLP resource for a k8s Job (k8sclusterreceiver)."""
+    attrs = {
+        "k8s.job.name": job_name,
+        "k8s.namespace.name": namespace,
+        "k8s.cluster.name": cluster["name"],
+        "cloud.provider": cluster["provider"],
+        "cloud.platform": cluster["platform"],
+        "data_stream.type": "metrics",
+        "data_stream.dataset": "k8sclusterreceiver",
+        "data_stream.namespace": "default",
+    }
+    return {"attributes": _format_attributes(attrs), "schemaUrl": SCHEMA_URL}
+
+
+def _generate_job_metrics(rng: random.Random) -> list:
+    """Generate k8sclusterreceiver-owned Job metrics."""
+    ts = _now_ns()
+    desired = 1
+    successful = desired if rng.random() > 0.1 else 0
+    active = 0 if successful else 1
+    failed = 1 if rng.random() < 0.05 else 0
+    return [
+        _gauge("k8s.job.active_pods", "{pod}", active, is_int=True, ts=ts),
+        _gauge("k8s.job.desired_successful_pods", "{pod}", desired, is_int=True, ts=ts),
+        _gauge("k8s.job.successful_pods", "{pod}", successful, is_int=True, ts=ts),
+        _gauge("k8s.job.failed_pods", "{pod}", failed, is_int=True, ts=ts),
+        _gauge("k8s.job.max_parallel_pods", "{pod}", 1, is_int=True, ts=ts),
+    ]
+
+
 # ── K8s Warning Events (logs) ───────────────────────────────────────────────
 
 WARNING_EVENTS = [
@@ -405,7 +626,7 @@ WARNING_EVENTS = [
 ]
 
 
-def _generate_k8s_warning_logs(client: OTLPClient, pod_data: dict, cluster: dict, rng: random.Random) -> None:
+def _generate_k8s_warning_logs(client: OTLPClient, pod_data: dict, cluster: dict, rng: random.Random, namespace: str = NAMESPACE) -> None:
     """Generate occasional K8s Warning event logs for the dashboard's Warning Events panel."""
     # Only emit ~20% of the time
     if rng.random() > 0.20:
@@ -426,9 +647,9 @@ def _generate_k8s_warning_logs(client: OTLPClient, pod_data: dict, cluster: dict
         "object.note": evt["message"],
         "object.regarding.kind": "Pod",
         "object.regarding.name": p["pod_name"],
-        "object.regarding.namespace": NAMESPACE,
+        "object.regarding.namespace": namespace,
         "object.metadata.name": event_name,
-        "object.metadata.namespace": NAMESPACE,
+        "object.metadata.namespace": namespace,
         "object.metadata.creationTimestamp": event_time_iso,
         "object.deprecatedSource.component": rng.choice(["kubelet", "scheduler", "controller-manager"]),
         "object.deprecatedSource.host": p["node_name"],
@@ -456,14 +677,14 @@ def _generate_k8s_warning_logs(client: OTLPClient, pod_data: dict, cluster: dict
             {"key": "k8s.object.name", "value": {"stringValue": p["pod_name"]}},
             {"key": "k8s.event.object.kind", "value": {"stringValue": "Pod"}},
             {"key": "k8s.event.object.name", "value": {"stringValue": p["pod_name"]}},
-            {"key": "k8s.event.object.namespace", "value": {"stringValue": NAMESPACE}},
-            {"key": "k8s.namespace.name", "value": {"stringValue": NAMESPACE}},
+            {"key": "k8s.event.object.namespace", "value": {"stringValue": namespace}},
+            {"key": "k8s.namespace.name", "value": {"stringValue": namespace}},
         ],
     }
 
     resource_attrs = {
         "k8s.cluster.name": cluster["name"],
-        "k8s.namespace.name": NAMESPACE,
+        "k8s.namespace.name": namespace,
         "cloud.provider": cluster["provider"],
         "cloud.platform": cluster["platform"],
         "cloud.region": cluster["region"],
@@ -486,7 +707,7 @@ def _generate_k8s_warning_logs(client: OTLPClient, pod_data: dict, cluster: dict
 
 # ── Run loop ─────────────────────────────────────────────────────────────────
 
-def _generate_oom_killed_log(client: OTLPClient, svc: str, pod_data: dict, cluster: dict, rng: random.Random) -> None:
+def _generate_oom_killed_log(client: OTLPClient, svc: str, pod_data: dict, cluster: dict, rng: random.Random, namespace: str = NAMESPACE) -> None:
     """Emit an OOMKilled event log for a targeted pod."""
     p = pod_data["pods"][svc]
     now_ns = _now_ns()
@@ -500,9 +721,9 @@ def _generate_oom_killed_log(client: OTLPClient, svc: str, pod_data: dict, clust
         "object.note": f"Container {svc}-container in pod {p['pod_name']} was OOMKilled (memory limit exceeded)",
         "object.regarding.kind": "Pod",
         "object.regarding.name": p["pod_name"],
-        "object.regarding.namespace": NAMESPACE,
+        "object.regarding.namespace": namespace,
         "object.metadata.name": event_name,
-        "object.metadata.namespace": NAMESPACE,
+        "object.metadata.namespace": namespace,
         "object.metadata.creationTimestamp": event_time_iso,
         "object.deprecatedSource.component": "kubelet",
         "object.deprecatedSource.host": p["node_name"],
@@ -528,14 +749,14 @@ def _generate_oom_killed_log(client: OTLPClient, svc: str, pod_data: dict, clust
             {"key": "k8s.object.name", "value": {"stringValue": p["pod_name"]}},
             {"key": "k8s.event.object.kind", "value": {"stringValue": "Pod"}},
             {"key": "k8s.event.object.name", "value": {"stringValue": p["pod_name"]}},
-            {"key": "k8s.event.object.namespace", "value": {"stringValue": NAMESPACE}},
-            {"key": "k8s.namespace.name", "value": {"stringValue": NAMESPACE}},
+            {"key": "k8s.event.object.namespace", "value": {"stringValue": namespace}},
+            {"key": "k8s.namespace.name", "value": {"stringValue": namespace}},
         ],
     }
 
     resource_attrs = {
         "k8s.cluster.name": cluster["name"],
-        "k8s.namespace.name": NAMESPACE,
+        "k8s.namespace.name": namespace,
         "cloud.provider": cluster["provider"],
         "cloud.platform": cluster["platform"],
         "cloud.region": cluster["region"],
@@ -561,6 +782,12 @@ def run(client: OTLPClient, stop_event: threading.Event, scenario_data: dict | N
     """Run K8s metrics generator loop until stop_event is set."""
     rng = random.Random()
     clusters = scenario_data["k8s_clusters"] if scenario_data else CLUSTERS
+    # Prefer per-deployment namespace; fall back to module global for standalone mode.
+    _namespace = scenario_data["namespace"] if scenario_data else NAMESPACE
+    # Per-namespace workload names (avoid frozen module-global NAMESPACE).
+    _daemonsets = [f"{_namespace}-log-collector", f"{_namespace}-node-exporter"]
+    _statefulsets = [f"{_namespace}-redis", f"{_namespace}-postgres"]
+    _jobs = [f"{_namespace}-db-backup", f"{_namespace}-report-gen"]
 
     # Build service -> cloud_provider mapping for targeted spikes
     _service_cloud: dict[str, str] = {}
@@ -597,7 +824,7 @@ def run(client: OTLPClient, stop_event: threading.Event, scenario_data: dict | N
         if _infra_topology is not None:
             pod_data = _to_pod_data(_infra_topology, cluster)
         else:
-            pod_data = _init_pod_data(cluster, seed_offset=idx)
+            pod_data = _init_pod_data(cluster, seed_offset=idx, namespace=_namespace)
         cluster_data.append((cluster, pod_data))
         total_services += len(cluster["services"])
         total_nodes += len(pod_data["node_names"])
@@ -628,98 +855,152 @@ def run(client: OTLPClient, stop_event: threading.Event, scenario_data: dict | N
         for cluster, pod_data in cluster_data:
             svcs = cluster["services"]
 
-            # Pod-level metrics (one resource per service, kubeletstatsreceiver scope)
+            # ── Pod-level metrics (kubeletstatsreceiver) ─────────────────────
+            # One resource per service; carries pod cpu/memory/network/filesystem
+            # and the two kubelet-owned container metrics (cpu.usage, memory.working_set).
             for svc in svcs:
                 # Check if this service should be OOM-spiked
                 is_spiked = oom_intensity > 0 and (not has_active_faults or svc in spiked_services)
-
-                pod_res = _build_pod_resource(svc, pod_data, cluster)
-                metrics = _generate_pod_metrics(svc, state, rng)
-
                 intensity_ratio = oom_intensity / 100.0
+
+                pod_res = _build_pod_resource(svc, pod_data, cluster, _namespace)
+                pod_metrics = _generate_pod_metrics(svc, state, rng)
+
                 if is_spiked:
-                    # Override memory metrics for spiked pods
-                    for m in metrics:
+                    # Override memory utilization for spiked pods
+                    for m in pod_metrics:
                         if m["name"] == "k8s.pod.memory_limit_utilization":
-                            m["gauge"]["dataPoints"][0]["asDouble"] = rng.uniform(0.92, 1.0) * intensity_ratio + (1 - intensity_ratio) * rng.uniform(0.25, 0.85)
-                        elif m["name"] == "k8s.container.restarts":
-                            # Increase restart probability: baseline 5% → up to 75%
-                            restart_chance = 0.05 + 0.70 * intensity_ratio
-                            if rng.random() < restart_chance:
-                                state.restarts[svc] += 1
-                                m["sum"]["dataPoints"][0]["asInt"] = str(state.restarts[svc])
+                            m["gauge"]["dataPoints"][0]["asDouble"] = (
+                                rng.uniform(0.92, 1.0) * intensity_ratio
+                                + (1 - intensity_ratio) * rng.uniform(0.25, 0.85)
+                            )
 
                 resource_metrics.append({
                     "resource": pod_res,
-                    "scopeMetrics": [{"scope": {"name": KUBELET_SCOPE, "version": SCOPE_VERSION}, "metrics": metrics}],
+                    "scopeMetrics": [{"scope": {"name": KUBELET_SCOPE, "version": SCOPE_VERSION}, "metrics": pod_metrics}],
                 })
+
+                # ── Container-level metrics (k8sclusterreceiver) ─────────────
+                # Separate resource for k8sclusterreceiver-owned container fields:
+                # restarts, cpu/memory requests+limits, last_terminated_reason attr.
+                container_res = _build_container_resource(svc, pod_data, cluster, _namespace)
+                container_metrics = _generate_container_metrics(svc, state, rng)
+
+                if is_spiked:
+                    # Increase restart probability: baseline 5% → up to 75%
+                    restart_chance = 0.05 + 0.70 * intensity_ratio
+                    if rng.random() < restart_chance:
+                        state.restarts[svc] += 1
+                        for m in container_metrics:
+                            if m["name"] == "k8s.container.restarts":
+                                m["gauge"]["dataPoints"][0]["asInt"] = str(state.restarts[svc])
+
+                resource_metrics.append({
+                    "resource": container_res,
+                    "scopeMetrics": [{"scope": {"name": CLUSTER_SCOPE, "version": SCOPE_VERSION}, "metrics": container_metrics}],
+                })
+
+                # ── Volume metrics (kubeletstatsreceiver) ────────────────────
+                for vol_suffix in ["data-pvc", "config-vol"]:
+                    vol_res = _build_volume_resource(svc, f"{svc}-{vol_suffix}", pod_data, cluster, _namespace)
+                    vol_metrics = _generate_volume_metrics(rng)
+                    resource_metrics.append({
+                        "resource": vol_res,
+                        "scopeMetrics": [{"scope": {"name": KUBELET_SCOPE, "version": SCOPE_VERSION}, "metrics": vol_metrics}],
+                    })
 
                 # Emit OOMKilled event log for spiked pods (probabilistic)
                 if is_spiked and rng.random() < 0.15 * intensity_ratio:
-                    _generate_oom_killed_log(client, svc, pod_data, cluster, rng)
+                    _generate_oom_killed_log(client, svc, pod_data, cluster, rng, _namespace)
 
             # Determine if any node in this cluster has spiked services
             cluster_has_spike = oom_intensity > 0 and (not has_active_faults or any(s in spiked_services for s in svcs))
 
-            # Node-level metrics (one resource per node, k8sclusterreceiver scope)
+            # ── Node-level metrics — split across two receivers ───────────────
             for node_name in pod_data["node_names"]:
-                node_res = _build_node_resource(node_name, pod_data, cluster)
-                metrics = _generate_node_metrics(rng)
+                # kubeletstatsreceiver: cpu.usage, memory.*, filesystem.*, network.*
+                kubelet_node_res = _build_node_resource_kubelet(node_name, pod_data, cluster)
+                kubelet_node_metrics = _generate_node_metrics_kubelet(rng)
+                resource_metrics.append({
+                    "resource": kubelet_node_res,
+                    "scopeMetrics": [{"scope": {"name": KUBELET_SCOPE, "version": SCOPE_VERSION}, "metrics": kubelet_node_metrics}],
+                })
+
+                # k8sclusterreceiver: allocatable_*, condition_*
+                cluster_node_res = _build_node_resource(node_name, pod_data, cluster)
+                cluster_node_metrics = _generate_node_metrics_cluster(rng)
 
                 if cluster_has_spike:
                     # Set memory_pressure condition on affected nodes
-                    for m in metrics:
+                    for m in cluster_node_metrics:
                         if m["name"] == "k8s.node.condition_memory_pressure":
                             m["gauge"]["dataPoints"][0]["asInt"] = str(1)
 
                 resource_metrics.append({
-                    "resource": node_res,
-                    "scopeMetrics": [{"scope": {"name": CLUSTER_SCOPE, "version": SCOPE_VERSION}, "metrics": metrics}],
+                    "resource": cluster_node_res,
+                    "scopeMetrics": [{"scope": {"name": CLUSTER_SCOPE, "version": SCOPE_VERSION}, "metrics": cluster_node_metrics}],
                 })
 
-            # Deployment-level metrics
+            # ── Deployment-level metrics ──────────────────────────────────────
             for svc in svcs:
-                dep_res = _build_deployment_resource(svc, pod_data, cluster)
+                dep_res = _build_deployment_resource(svc, pod_data, cluster, _namespace)
                 metrics = _generate_deployment_metrics(rng)
                 resource_metrics.append({
                     "resource": dep_res,
                     "scopeMetrics": [{"scope": {"name": CLUSTER_SCOPE, "version": SCOPE_VERSION}, "metrics": metrics}],
                 })
 
-            # DaemonSet metrics
+            # ── DaemonSet metrics ─────────────────────────────────────────────
             num_nodes = len(pod_data["node_names"])
-            for ds_name in DAEMONSETS:
-                ds_res = _build_daemonset_resource(ds_name, cluster)
+            for ds_name in _daemonsets:
+                ds_res = _build_daemonset_resource(ds_name, cluster, _namespace)
                 metrics = _generate_daemonset_metrics(rng, num_nodes)
                 resource_metrics.append({
                     "resource": ds_res,
                     "scopeMetrics": [{"scope": {"name": CLUSTER_SCOPE, "version": SCOPE_VERSION}, "metrics": metrics}],
                 })
 
-            # StatefulSet metrics
-            for ss_name in STATEFULSETS:
-                ss_res = _build_statefulset_resource(ss_name, cluster)
+            # ── StatefulSet metrics ───────────────────────────────────────────
+            for ss_name in _statefulsets:
+                ss_res = _build_statefulset_resource(ss_name, cluster, _namespace)
                 metrics = _generate_statefulset_metrics(rng)
                 resource_metrics.append({
                     "resource": ss_res,
                     "scopeMetrics": [{"scope": {"name": CLUSTER_SCOPE, "version": SCOPE_VERSION}, "metrics": metrics}],
                 })
 
-            # ReplicaSet metrics
+            # ── ReplicaSet metrics ────────────────────────────────────────────
             for svc in svcs:
-                rs_res = _build_replicaset_resource(svc, pod_data, cluster)
+                rs_res = _build_replicaset_resource(svc, pod_data, cluster, _namespace)
                 metrics = _generate_replicaset_metrics(rng)
                 resource_metrics.append({
                     "resource": rs_res,
                     "scopeMetrics": [{"scope": {"name": CLUSTER_SCOPE, "version": SCOPE_VERSION}, "metrics": metrics}],
                 })
 
-            # Pod phase metrics
+            # ── Pod phase metrics ─────────────────────────────────────────────
             for svc in svcs:
-                phase_res = _build_pod_phase_resource(svc, pod_data, cluster)
+                phase_res = _build_pod_phase_resource(svc, pod_data, cluster, _namespace)
                 metrics = _generate_pod_phase_metric(rng)
                 resource_metrics.append({
                     "resource": phase_res,
+                    "scopeMetrics": [{"scope": {"name": CLUSTER_SCOPE, "version": SCOPE_VERSION}, "metrics": metrics}],
+                })
+
+            # ── Namespace metrics ─────────────────────────────────────────────
+            ns_res = _build_namespace_resource(_namespace, cluster)
+            ns_metrics = _generate_namespace_metrics(rng)
+            resource_metrics.append({
+                "resource": ns_res,
+                "scopeMetrics": [{"scope": {"name": CLUSTER_SCOPE, "version": SCOPE_VERSION}, "metrics": ns_metrics}],
+            })
+
+            # ── Job metrics ───────────────────────────────────────────────────
+            for job_name in _jobs:
+                job_res = _build_job_resource(job_name, cluster, _namespace)
+                metrics = _generate_job_metrics(rng)
+                resource_metrics.append({
+                    "resource": job_res,
                     "scopeMetrics": [{"scope": {"name": CLUSTER_SCOPE, "version": SCOPE_VERSION}, "metrics": metrics}],
                 })
 
@@ -728,7 +1009,7 @@ def run(client: OTLPClient, stop_event: threading.Event, scenario_data: dict | N
 
         # Occasional K8s warning event logs (pick a random cluster)
         cluster, pod_data = rng.choice(cluster_data)
-        _generate_k8s_warning_logs(client, pod_data, cluster, rng)
+        _generate_k8s_warning_logs(client, pod_data, cluster, rng, _namespace)
 
         scrape_count += 1
         if scrape_count % 4 == 0:
